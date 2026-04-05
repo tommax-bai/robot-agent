@@ -66,7 +66,7 @@ def get_screenshot_base64(trace_id: str, include_cursor: bool = False) -> tuple[
     
     # 将图像转换为 base64 编码
     buffered = BytesIO()
-    screen_img.save(buffered, format="JPEG", quality=75 )
+    screen_img.save(buffered, format="JPEG", quality=75)
     img_base64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
     
     logger.info({

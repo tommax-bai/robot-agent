@@ -1,7 +1,7 @@
 from config import global_config
 
 
-def normalize_to_screen(x: float, y: float) -> tuple[int, int]:
+def normalize_to_screen(x: float, y: float, is_window: bool = False) -> tuple[int, int]:
     """
     将归一化坐标 (0-1000) 转换为屏幕逻辑像素坐标
     
@@ -20,5 +20,5 @@ def normalize_to_screen(x: float, y: float) -> tuple[int, int]:
     # pixel_y = y
     return int(round(pixel_x)), int(round(pixel_y))
 
-def normalize_to_windwos():
+def window_to_screen():
     pass
