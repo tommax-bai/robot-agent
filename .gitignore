@@ -1,0 +1,13 @@
+.venv/
+data/
+
+*.pyc
+__pycache__/
+
+
+logs/
+logs/token_usage/
+
+history/
+
+__pycache__/cig.cpython-313.pyconf
