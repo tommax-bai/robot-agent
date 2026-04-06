@@ -13,7 +13,7 @@ import core.actions as actions
 from agent.skill_loader import SkillLoader, extract_json
 from agent.planner import Planner
 from agent.context_manager import ContextManager
-from prompts.base_prompt import BASE_PROMPT
+from prompts.action_prompt import ACTION_PROMPT
 from utils.token_logger import log_token_usage
 
 
@@ -211,7 +211,7 @@ def run_react_loop(trace_id: str, sub_goal: str, skill_name: str, loader: SkillL
     screen_height = config.global_config["screen_size"]["height"]
     current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
-    base = BASE_PROMPT.format(
+    action = ACTION_PROMPT.format(
         SCREEN_WIDTH=screen_width, 
         SCREEN_HEIGHT=screen_height,
         CURRENT_TIME=current_time
@@ -221,18 +221,18 @@ def run_react_loop(trace_id: str, sub_goal: str, skill_name: str, loader: SkillL
         skill_content = loader.build_skill_prompt([skill_name])
     
     # 重新定义系统提示词的结构，强化子目标的边界控制
-    system_prompt = f"""{base}
+    system_prompt = f"""
+        {action}
+        {skill_content}
 
-{skill_content}
+        ## 🎯 当前至高使命 (The Supreme Mission)
+        你目前的子任务目标是："{sub_goal}"。
 
-## 🎯 当前至高使命 (The Supreme Mission)
-你目前的子任务目标是："{sub_goal}"。
-
-### 🚨 绝对指令 (Absolute Constraints)：
-1. **任务达成即停止**：你的所有操作必须【仅】为了达成上述目标。
-2. **严禁过度执行**：即便挂载的“专家技能”中有后续步骤（如登录、点击、输入），只要你视觉确认"{sub_goal}"已经达成，你必须【立即】输出 `finish` 动作。
-3. **完成判定逻辑**：在执行任何动作前，先问自己：“目标是否已达成？”。如果是，调用 `finish`。例如：如果目标是“打开页面”，页面一旦加载完成（即便弹出了登录框），你也必须立即 `finish`，严禁擅自执行登录连招。
-"""
+        ### 🚨 绝对指令 (Absolute Constraints)：
+        1. **任务达成即停止**：你的所有操作必须【仅】为了达成上述目标。
+        2. **严禁过度执行**：即便挂载的“专家技能”中有后续步骤（如登录、点击、输入），只要你视觉确认"{sub_goal}"已经达成，你必须【立即】输出 `finish` 动作。
+        3. **完成判定逻辑**：在执行任何动作前，先问自己：“目标是否已达成？”。如果是，调用 `finish`。例如：如果目标是“打开页面”，页面一旦加载完成（即便弹出了登录框），你也必须立即 `finish`，严禁擅自执行登录连招。
+    """
     ctx.set_system_prompt(system_prompt)
 
     last_result = {"ok": True, "message": "任务开始"}
@@ -265,6 +265,7 @@ def run_react_loop(trace_id: str, sub_goal: str, skill_name: str, loader: SkillL
                 temperature=temperature
             )
             # 放弃 print，全部改用 logger.info
+            #llm_str = ctx.get_messages()
             logger.info({"msg": f"Step {step} LLM Raw Output", "raw": raw}, trace_id)
             
             ctx.add_assistant_message(raw)
@@ -371,7 +372,8 @@ def run_react_loop(trace_id: str, sub_goal: str, skill_name: str, loader: SkillL
                     step_results.append({"method": method, "result": action_res})
 
                 if len(action_list) > 1 and idx < len(action_list) - 1:
-                    wait_time = current_action.get("delay", 3)
+                    wait_time = current_action.get("delay", 0) + 1
+
                     logger.info({"msg": f"连招间隙等待 {wait_time} 秒..."}, trace_id)
                     time.sleep(wait_time)
 

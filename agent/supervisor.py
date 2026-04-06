@@ -177,11 +177,9 @@ class Supervisor:
         self.mode = mode
         logger.info({"msg": "Agent 模式切换", "old_mode": old_mode.value, "new_mode": mode.value})
         
-        if mode in [AgentMode.DEBUG, AgentMode.WAITING]:
-            target_id = self.current_trace_id
-            if target_id:
-                self.aborted_trace_ids.add(target_id)
-                logger.info({"msg": "已将当前任务加入强杀名单", "trace_id": target_id})
+        if mode in [AgentMode.DEBUG, AgentMode.WAITING] and self.current_trace_id:
+            self.aborted_trace_ids.add(self.current_trace_id)
+            logger.info({"msg": "已将当前任务加入强杀名单", "trace_id": self.current_trace_id})
 
     def is_aborted(self, trace_id: str) -> bool:
         aborted = trace_id in self.aborted_trace_ids

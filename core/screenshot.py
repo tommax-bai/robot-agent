@@ -9,20 +9,25 @@
 """
 
 import utils.logger as logger
-import pyautogui
-from PIL import ImageDraw, Image
+
+import os
 import time
 import config
-import os
 import base64
 import argparse
 from io import BytesIO
 from typing import Optional
 
+import pyautogui
+import pywinctl
+
+from PIL import ImageDraw, Image
 from PIL import ImageEnhance
 from PIL import ImageOps
+from PIL import ImageGrab
 
-def get_screenshot_base64(trace_id: str, include_cursor: bool = False) -> tuple[str, int, int]:
+
+def get_screenshot_base64(trace_id: str, include_cursor: bool = False, shot_window: str = "小红书|Chrome") -> tuple[str, int, int]:
     """
     截取当前屏幕并返回 base64 编码的图像数据
     
@@ -39,8 +44,20 @@ def get_screenshot_base64(trace_id: str, include_cursor: bool = False) -> tuple[
     mouse_x_scaled = 0
     mouse_y_scaled = 0
 
+    for title in shot_window.split("|"): 
+        windows = pywinctl.getWindowsWithTitle(title, pywinctl.Re.CONTAINS)
+        if windows: 
+            break
+
+    if not windows:
+        return "", 0, 0
+    
+    window = windows[0]
+    window.activate()
+
     # 截取屏幕
-    screen_img = pyautogui.screenshot()
+    #screen_img = pyautogui.screenshot()
+    screen_img = ImageGrab.grab(bbox=(window.left, window.top, window.right, window.bottom))
 
     # 图片质量压缩，提升LLM处理效率
     screen_img = screen_img.convert("P", palette=Image.ADAPTIVE, colors=128)
@@ -51,10 +68,9 @@ def get_screenshot_base64(trace_id: str, include_cursor: bool = False) -> tuple[
 
     screen_img = ImageOps.posterize(screen_img, bits=5)
 
-    
     # 如果需要标记鼠标位置，在截图上画红色十字
     if include_cursor:
-        _draw_mouse_cursor(screen_img)
+       mouse_x_scaled, mouse_y_scaled = _draw_mouse_cursor(screen_img, window)
     
     # 如果配置了持久化保存，将截图保存到本地
     persist = config.global_config.get("screenshot", {}).get("persist", False)
@@ -69,23 +85,29 @@ def get_screenshot_base64(trace_id: str, include_cursor: bool = False) -> tuple[
     screen_img.save(buffered, format="JPEG", quality=75)
     img_base64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
     
+    from runtime import context
+    context.core["window"]["x"] = window.left
+    context.core["window"]["y"] = window.top
+    context.core["window"]["w"] = window.right - window.left
+    context.core["window"]["h"] = window.bottom - window.top
+
     logger.info({
-        "msg": f"截图成功, 鼠标位置: {mouse_x_scaled}, {mouse_y_scaled}",
+        "msg": f"截图成功, 鼠标位置: {mouse_x_scaled}, {mouse_y_scaled}, 窗口信息 {context.core["window"]}",
         "trace_id": trace_id,
     })
-    
+
     return img_base64, mouse_x_scaled, mouse_y_scaled
 
 
-def _draw_mouse_cursor(screen_img: Image) -> tuple[int, int] :
+def _draw_mouse_cursor(screen_img: Image, window) -> tuple[int, int] :
     # 获取缩放比例（Retina 屏幕为 2.0，普通屏幕为 1.0）
     scale = config.global_config.get("screen_size", {}).get("scale", 1.0)
     
     # 获取鼠标逻辑坐标并转换为物理像素坐标
     draw = ImageDraw.Draw(screen_img)
     mouse_x, mouse_y = pyautogui.position()
-    mouse_x_scaled = int(mouse_x * scale)
-    mouse_y_scaled = int(mouse_y * scale)
+    mouse_x_scaled = int(mouse_x * scale) - window.left
+    mouse_y_scaled = int(mouse_y * scale) - window.top
 
     # 十字标记样式配置
     cross_color = "red"

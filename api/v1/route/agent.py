@@ -108,7 +108,13 @@ async def toggle_patrol(enable: bool = Body(..., embed=True)):
 async def set_debug_mode():
     """切换到调试模式"""
     supervisor.set_mode(AgentMode.DEBUG)
-    return {"message": "已进入调试模式，所有自动化已停止"}
+    return {"message": "已进入调试模式，所有任务已停止"}
+
+@router.post("/agent/mode/waiting")
+async def set_debug_mode():
+    """切换到调试模式"""
+    supervisor.set_mode(AgentMode.WAITING)
+    return {"message": "已进入WAITING模式"}
 
 @router.post("/agent/maintenance/trigger")
 async def trigger_maintenance():

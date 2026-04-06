@@ -1,7 +1,8 @@
 from config import global_config
+from runtime import context
 
 
-def normalize_to_screen(x: float, y: float, is_window: bool = False) -> tuple[int, int]:
+def llm_to_screen(x: float, y: float) -> tuple[int, int]:
     """
     将归一化坐标 (0-1000) 转换为屏幕逻辑像素坐标
     
@@ -12,13 +13,13 @@ def normalize_to_screen(x: float, y: float, is_window: bool = False) -> tuple[in
     Returns:
         tuple: (屏幕 x 坐标, 屏幕 y 坐标)
     """
-    screen_width = global_config["screen_size"]["width"]
-    screen_height = global_config["screen_size"]["height"]
-    pixel_x = (x / 1000) * screen_width
-    pixel_y = (y / 1000) * screen_height
-    # pixel_x = x
-    # pixel_y = y
-    return int(round(pixel_x)), int(round(pixel_y))
+    screen_w = context.core["window"]["w"] or global_config["screen_size"]["width"]
+    screen_h = context.core["window"]["h"] or global_config["screen_size"]["height"]
 
-def window_to_screen():
-    pass
+    pixel_x = x * (screen_w / 1000)
+    pixel_y = y * (screen_h / 1000)
+
+    pixel_x += context.core["window"]["x"]
+    pixel_y += context.core["window"]["y"]
+
+    return int(round(pixel_x)), int(round(pixel_y))

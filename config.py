@@ -39,7 +39,7 @@ global_config = {
     "screenshot": {
         # 是否持久化保存，默认关闭，如果开启则需要同时设置save_dir
         # 该配置代表当进行屏幕截图时，本地是否保留一份，如果关闭则不保留
-        "persist": False,
+        "persist": True,
         "save_dir": "data",
     },
     # Chrome相关配置信息
@@ -55,8 +55,8 @@ global_config = {
     },
     # 智能体大脑与灵感配置
     "agent": {
-        "default_mode": "patrolling",
-        # "default_mode": "waiting",
+        #"default_mode": "patrolling",
+        "default_mode": "waiting",
         # E1 - 技能选择策略
         "skill_selection": {
             # 显式禁用的一级技能分组（对应 skills/ 下第一级目录），例如: rednote_app、rednote、douyin_web
@@ -173,9 +173,9 @@ global_config = {
             "reply_probability": 0.8,
             # 每日任务日程表：按时间段分配任务类型 (patrol=巡逻, dm=私信, post=发帖，cr=评论)
             "daily_schedule": [
-                {"start": "08:00", "end": "11:00", "task": "patrol"},
-                {"start": "11:00", "end": "13:00", "task": "dm"},
-                {"start": "13:00", "end": "23:00", "task": "patrol"},
+                #{"start": "08:00", "end": "11:00", "task": "patrol"},
+                #{"start": "11:00", "end": "13:00", "task": "dm"},
+                #{"start": "13:00", "end": "23:00", "task": "patrol"},
             ],
             # 巡逻轮次间休息时间范围（秒）
             "patrol_rest_between_rounds": [300, 600],

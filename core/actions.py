@@ -1,4 +1,4 @@
-from utils.screen import normalize_to_screen
+from utils.screen import llm_to_screen
 import pyautogui
 import pyperclip
 import config
@@ -40,21 +40,25 @@ def do_actions_step(trace_id: str, data: dict) -> dict:
                 y_val = get_param(params, "y")
                 if x_val is None or y_val is None:
                     raise KeyError(f"缺少坐标参数 x 或 y, 收到: {list(params.keys())}")
-                x, y = normalize_to_screen(float(x_val), float(y_val))
+                x, y = llm_to_screen(float(x_val), float(y_val))
+                logger.info(f"move and click {x},{y}")
+                pyautogui.moveTo(x=x, y=y)
                 pyautogui.click(x=x, y=y)
                 return {"ok": True, "message": f"点击成功 ({x}, {y})", "finish": finish}
 
             case "dblclick":
                 x_val = get_param(params, "x")
                 y_val = get_param(params, "y")
-                x, y = normalize_to_screen(float(x_val), float(y_val))
+                x, y = llm_to_screen(float(x_val), float(y_val))
+                pyautogui.moveTo(x=x, y=y)
                 pyautogui.doubleClick(x=x, y=y)
                 return {"ok": True, "message": f"双击成功 ({x}, {y})", "finish": finish}
 
             case "move":
                 x_val = get_param(params, "x")
                 y_val = get_param(params, "y")
-                x, y = normalize_to_screen(float(x_val), float(y_val))
+                x, y = llm_to_screen(float(x_val), float(y_val))
+                logger.info(f"move to {x},{y}")
                 pyautogui.moveTo(x=x, y=y)
                 return {"ok": True, "message": f"移动成功 ({x}, {y})", "finish": finish}
 
@@ -64,7 +68,7 @@ def do_actions_step(trace_id: str, data: dict) -> dict:
                 y_val = get_param(params, "y")
                 
                 if x_val is not None and y_val is not None:
-                    sx, sy = normalize_to_screen(float(x_val), float(y_val))
+                    sx, sy = llm_to_screen(float(x_val), float(y_val))
                     # 拟人化修正：点击屏幕边缘的安全区以激活窗口，防止误触
                     # screen_width = config.global_config["screen_size"]["width"]
                     # safe_x = 50 if sx > (screen_width / 2) else (screen_width - 50)
@@ -98,7 +102,7 @@ def do_actions_step(trace_id: str, data: dict) -> dict:
                     y1 = get_param(params, "y1")
                     if x1 is None or y1 is None:
                         raise KeyError(f"缺少滚动坐标参数, 收到: {list(params.keys())}")
-                    sx1, sy1 = normalize_to_screen(float(x1), float(y1))
+                    sx1, sy1 = llm_to_screen(float(x1), float(y1))
                     # 同样点击安全边缘
                     # screen_width = config.global_config["screen_size"]["width"]
                     # safe_x1 = 50 if sx1 > (screen_width / 2) else (screen_width - 50)
@@ -114,8 +118,8 @@ def do_actions_step(trace_id: str, data: dict) -> dict:
                 y1 = float(get_param(params, "y1"))
                 x2 = float(get_param(params, "x2"))
                 y2 = float(get_param(params, "y2"))
-                sx1, sy1 = normalize_to_screen(x1, y1)
-                sx2, sy2 = normalize_to_screen(x2, y2)
+                sx1, sy1 = llm_to_screen(x1, y1)
+                sx2, sy2 = llm_to_screen(x2, y2)
                 human_drag(sx1, sy1, sx2, sy2)
                 return {"ok": True, "message": "拖动成功", "finish": finish}
 
