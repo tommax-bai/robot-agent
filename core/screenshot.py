@@ -73,9 +73,9 @@ def get_screenshot_base64(trace_id: str, include_cursor: bool = False, shot_wind
        mouse_x_scaled, mouse_y_scaled = _draw_mouse_cursor(screen_img, window)
     
     # 如果配置了持久化保存，将截图保存到本地
-    persist = config.global_config.get("screenshot", {}).get("persist", False)
+    persist = config.system.get("screenshot", {}).get("persist", False)
     if persist:
-        save_dir = config.global_config.get("screenshot", {}).get("save_dir", "data")
+        save_dir = config.system.get("screenshot", {}).get("save_dir", "data")
         full_path = os.path.join(save_dir, trace_id)
         os.makedirs(full_path, exist_ok=True)
         screen_img.save(os.path.join(full_path, f"screenshot_{time.time()}.jpeg"))
@@ -101,7 +101,7 @@ def get_screenshot_base64(trace_id: str, include_cursor: bool = False, shot_wind
 
 def _draw_mouse_cursor(screen_img: Image, window) -> tuple[int, int] :
     # 获取缩放比例（Retina 屏幕为 2.0，普通屏幕为 1.0）
-    scale = config.global_config.get("screen_size", {}).get("scale", 1.0)
+    scale = config.system.get("screen_size", {}).get("scale", 1.0)
     
     # 获取鼠标逻辑坐标并转换为物理像素坐标
     draw = ImageDraw.Draw(screen_img)

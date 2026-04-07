@@ -1,4 +1,4 @@
-from config import global_config
+import config
 from runtime import context
 
 
@@ -13,8 +13,8 @@ def llm_to_screen(x: float, y: float) -> tuple[int, int]:
     Returns:
         tuple: (屏幕 x 坐标, 屏幕 y 坐标)
     """
-    screen_w = context.core["window"]["w"] or global_config["screen_size"]["width"]
-    screen_h = context.core["window"]["h"] or global_config["screen_size"]["height"]
+    screen_w = context.core["window"]["w"] or config.system["screen_size"]["width"]
+    screen_h = context.core["window"]["h"] or config.system["screen_size"]["height"]
 
     pixel_x = x * (screen_w / 1000)
     pixel_y = y * (screen_h / 1000)

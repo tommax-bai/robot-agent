@@ -37,7 +37,7 @@ class ChromeClient:
         """  
         try:  
             resp = requests.get(  
-                f"http://{config.global_config['chrome']['chrome_ip']}:{config.global_config['chrome']['debug_port']}/json",  
+                f"http://{config.system['chrome']['chrome_ip']}:{config.system['chrome']['debug_port']}/json",  
                 timeout=2  
             )  
             if resp.status_code == 200:  
@@ -63,7 +63,7 @@ class ChromeClient:
         """  
         try:  
             resp = requests.get(  
-                f"http://{config.global_config['chrome']['chrome_ip']}:{config.global_config['chrome']['debug_port']}/json",  
+                f"http://{config.system['chrome']['chrome_ip']}:{config.system['chrome']['debug_port']}/json",  
                 timeout=2  
             )  
             if resp.status_code == 200:  
@@ -87,7 +87,7 @@ class ChromeClient:
         try:  
             # 通过 CDP 激活标签页  
             resp = requests.get(  
-                f"http://{config.global_config['chrome']['chrome_ip']}:{config.global_config['chrome']['debug_port']}/json/activate/{tab_id}",  
+                f"http://{config.system['chrome']['chrome_ip']}:{config.system['chrome']['debug_port']}/json/activate/{tab_id}",  
                 timeout=2  
             )  
             if resp.status_code == 200:  
@@ -138,7 +138,7 @@ class ChromeClient:
         """  
         try:  
             resp = requests.put(  
-                f"http://{config.global_config['chrome']['chrome_ip']}:{config.global_config['chrome']['debug_port']}/json/new?{url}",  
+                f"http://{config.system['chrome']['chrome_ip']}:{config.system['chrome']['debug_port']}/json/new?{url}",  
                 timeout=5  
             )  
             if resp.status_code == 200:  
@@ -157,7 +157,7 @@ class ChromeClient:
         """  
         try:  
             resp = requests.get(  
-                f"http://{config.global_config['chrome']['chrome_ip']}:{config.global_config['chrome']['debug_port']}/json/close/{tab_id}",  
+                f"http://{config.system['chrome']['chrome_ip']}:{config.system['chrome']['debug_port']}/json/close/{tab_id}",  
                 timeout=2  
             )  
             return resp.status_code == 200  
@@ -283,7 +283,7 @@ class ChromeClient:
         """检查调试端口"""  
         try:  
             resp = requests.get(  
-                f"http://{config.global_config['chrome']['chrome_ip']}:{config.global_config['chrome']['debug_port']}/json",  
+                f"http://{config.system['chrome']['chrome_ip']}:{config.system['chrome']['debug_port']}/json",  
                 timeout=2  
             )  
             return resp.status_code == 200  
@@ -303,8 +303,8 @@ class ChromeClient:
     def _start_chrome(self) -> bool:  
         """启动 Chrome"""  
         try:  
-            os.makedirs(config.global_config['chrome']['profile_dir'], exist_ok=True)  
-            cmd = config.global_config['chrome']['chrome_command']  
+            os.makedirs(config.system['chrome']['profile_dir'], exist_ok=True)  
+            cmd = config.system['chrome']['chrome_command']  
             logger.info(f"正在启动 Chrome: {' '.join(cmd)}")
   
             kwargs = {  
@@ -312,7 +312,7 @@ class ChromeClient:
                 "stderr": subprocess.DEVNULL,  
             }  
   
-            if config.global_config['system_info'] == "win32":  
+            if config.system['system_info'] == "win32":  
                 startupinfo = subprocess.STARTUPINFO()  
                 startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW  
                 startupinfo.wShowWindow = subprocess.SW_HIDE  
@@ -340,11 +340,11 @@ class ChromeClient:
                 options = Options()  
                 options.add_experimental_option(  
                     "debuggerAddress",  
-                    f"{config.global_config['chrome']['chrome_ip']}:{config.global_config['chrome']['debug_port']}"  
+                    f"{config.system['chrome']['chrome_ip']}:{config.system['chrome']['debug_port']}"  
                 )  
                 options.add_argument("--log-level=3")  
       
-                if config.global_config['system_info'] == "win32":  
+                if config.system['system_info'] == "win32":  
                     service = webdriver.ChromeService(log_output=subprocess.DEVNULL)  
                 else:  
                     service = webdriver.ChromeService(executable_path="/Users/baitianxing/codes/chromedriver-mac-arm64/chromedriver", log_output=os.devnull)  

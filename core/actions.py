@@ -70,7 +70,7 @@ def do_actions_step(trace_id: str, data: dict) -> dict:
                 if x_val is not None and y_val is not None:
                     sx, sy = llm_to_screen(float(x_val), float(y_val))
                     # 拟人化修正：点击屏幕边缘的安全区以激活窗口，防止误触
-                    # screen_width = config.global_config["screen_size"]["width"]
+                    # screen_width = config.system["screen_size"]["width"]
                     # safe_x = 50 if sx > (screen_width / 2) else (screen_width - 50)
                     # pyautogui.click(x=safe_x, y=sy)
                     # time.sleep(0.1)
@@ -104,7 +104,7 @@ def do_actions_step(trace_id: str, data: dict) -> dict:
                         raise KeyError(f"缺少滚动坐标参数, 收到: {list(params.keys())}")
                     sx1, sy1 = llm_to_screen(float(x1), float(y1))
                     # 同样点击安全边缘
-                    # screen_width = config.global_config["screen_size"]["width"]
+                    # screen_width = config.system["screen_size"]["width"]
                     # safe_x1 = 50 if sx1 > (screen_width / 2) else (screen_width - 50)
                     # pyautogui.click(x=safe_x1, y=sy1)
                     # time.sleep(0.1)
@@ -126,7 +126,7 @@ def do_actions_step(trace_id: str, data: dict) -> dict:
             case "paste":
                 text = get_param(params, "text", "")
                 pyperclip.copy(text)
-                platform = config.global_config["system_info"]
+                platform = config.system["system_info"]
                 modifier = "command" if platform == "darwin" else "ctrl"
                 pyautogui.hotkey(modifier, 'v')
                 return {"ok": True, "message": "粘贴成功", "finish": finish}

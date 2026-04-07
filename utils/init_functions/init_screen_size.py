@@ -9,7 +9,7 @@ def init_screen_size():
     screenshot = pyautogui.screenshot()
     scale = screenshot.width / screen_width
     
-    config.global_config["screen_size"] = {
+    config.system["screen_size"] = {
         "width": screen_width,
         "height": screen_height,
         "scale": scale,

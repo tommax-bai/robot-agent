@@ -8,8 +8,7 @@ import config
 class Planner:
     def __init__(self, model: str = None, llm_client_name: str = None):
         # 优先从 config 读取配置
-        agent_config = config.global_config.get("agent", {})
-        model_config = agent_config.get("planner_model", {})
+        model_config = config.agent.get("planner_model", {})
         
         self.model = model or model_config.get("model", "google/gemini-3-flash-preview")
         self.llm_client_name = llm_client_name or model_config.get("llm_client", "zenmux")
@@ -35,7 +34,7 @@ class Planner:
 
         try:
             # 引入 _call_llm 统一调用逻辑以记录 Token
-            from agent.react import _call_llm
+            from agent.operator import _call_llm
             plan_data, raw_content = _call_llm(
                 messages=[{"role": "user", "content": prompt}],
                 model=self.model,

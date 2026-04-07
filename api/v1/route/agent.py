@@ -3,7 +3,7 @@ import uuid
 import asyncio
 import websockets
 import httpx
-from agent.react import run_task
+from agent.operator import run_task
 from agent.supervisor import supervisor, AgentMode
 from dto.agent import AgentRequest
 import config
@@ -128,7 +128,7 @@ async def trigger_maintenance():
 async def proxy_chrome_http(path: str, request: Request):
     async with httpx.AsyncClient() as client:
         # 将请求转发给本地 Chrome
-        url = f"http://{config.global_config['chrome']['chrome_ip']}:{config.global_config['chrome']['debug_port']}/{path}"
+        url = f"http://{config.system['chrome']['chrome_ip']}:{config.system['chrome']['debug_port']}/{path}"
         params = dict(request.query_params)
         
         # 核心：必须伪造 Host 头，否则 Chrome 会报 403
@@ -143,8 +143,8 @@ async def proxy_chrome_ws(websocket: WebSocket, page_id: str):
     subprotocol = websocket.headers.get("sec-websocket-protocol")
     await websocket.accept(subprotocol=subprotocol)
     
-    chrome_ip = config.global_config['chrome']['chrome_ip']
-    chrome_port = config.global_config['chrome']['debug_port']
+    chrome_ip = config.system['chrome']['chrome_ip']
+    chrome_port = config.system['chrome']['debug_port']
     chrome_ws_url = f"ws://{chrome_ip}:{chrome_port}/devtools/page/{page_id}"
     
     try:

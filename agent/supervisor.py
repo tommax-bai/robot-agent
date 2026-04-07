@@ -8,7 +8,7 @@ from enum import Enum
 from datetime import datetime
 from typing import Optional, Dict, Any, List
 import utils.logger as logger
-from agent.react import run_task
+from agent.operator import run_task
 from core.cleanup import cleanup_chrome_environment
 import config
 
@@ -30,11 +30,17 @@ class Supervisor:
     def __init__(self):
         if self._initialized:
             return
-        agent_cfg = config.global_config.get("agent", {})
+        anget_config = config.agent.get("agent", {})
         
         # self.mode = AgentMode.PATROLLING
-        default_mode_str = agent_cfg.get("default_mode", "patrolling")
-        self.mode = AgentMode.PATROLLING if default_mode_str == "patrolling" else AgentMode.WAITING
+        default_mode = anget_config.get("default_mode", "patrolling")
+
+        self.mode = AgentMode.WAITING
+        if anget_config.get("default_mode", "patrolling") == "patrolling":
+            self.mode = AgentMode.PATROLLING
+        else:
+            self.mode = AgentMode.WAITING
+
         self.current_trace_id: Optional[str] = None
         self.current_goal: Optional[str] = None
         self.start_time: float = 0
@@ -45,19 +51,19 @@ class Supervisor:
         
         from skills.rednote.maintainer.scripts.rednote_sync_account_data import get_current_state
         state = get_current_state()
-        maint_cfg = agent_cfg.get("maintenance", {})
+        maint_cfg = anget_config.get("maintenance", {})
         
         if state and "inspiration_pool" in state:
             self.inspiration_pool = list(state["inspiration_pool"])
         else:
-            self.inspiration_pool = list(agent_cfg.get("inspiration_pool", ["职场", "AI工具"]))
+            self.inspiration_pool = list(anget_config.get("inspiration_pool", ["职场", "AI工具"]))
             
         if state and "title_few_shots" in state:
             self.title_few_shots = list(state["title_few_shots"])
         else:
             self.title_few_shots = list(maint_cfg.get("title_few_shots", []))
 
-        self.max_pool_size = agent_cfg.get("inspiration_pool_max_size", 30)
+        self.max_pool_size = anget_config.get("inspiration_pool_max_size", 30)
         self.last_discovery = state.get("last_discovery", "") if state else ""
         
         self._initialized = True
@@ -106,7 +112,7 @@ class Supervisor:
                     await self._do_cr_round()
 
                 elif current_task == "post":
-                    max_posts = config.global_config["agent"]["maintenance"].get("max_posts_per_day", 5)
+                    max_posts = config.agent["maintenance"].get("max_posts_per_day", 5)
                     if self.today_post_count >= max_posts:
                         logger.info({
                             "msg": f"今日已发布 {self.today_post_count}/{max_posts} 篇，本时段空闲"
@@ -257,7 +263,7 @@ class Supervisor:
                 self.current_trace_id = None
                 self.current_goal = None
 
-        rest_range = config.global_config["agent"]["maintenance"].get(
+        rest_range = config.agent["maintenance"].get(
             "patrol_rest_between_rounds", [300, 600]
         )
         wait = random.randint(rest_range[0], rest_range[1])
@@ -367,9 +373,8 @@ class Supervisor:
             from skills.rednote.maintainer.scripts.rednote_sync_account_data import get_current_state
             state = get_current_state() or {}
             
-            agent_config = config.global_config.get("agent", {})
-            planner_config = agent_config.get("planner_model", {})
-            maint_cfg = agent_config.get("maintenance", {})
+            planner_config = config.agent.get("planner_model", {})
+            maint_cfg = config.agent.get("maintenance", {})
             persona = maint_cfg.get("persona", {})
             recruitment_info = maint_cfg.get("recruitment_info", "正在招聘优秀人才")
             strategy = persona.get("writing_strategy", {})
@@ -457,9 +462,8 @@ class Supervisor:
             state = get_current_state() or {}
             mood = state.get("mood", "neutral")
             
-            agent_config = config.global_config.get("agent", {})
-            planner_config = agent_config.get("planner_model", {})
-            maint_cfg = agent_config.get("maintenance", {})
+            planner_config = config.agent.get("planner_model", {})
+            maint_cfg = config.agent.get("maintenance", {})
             persona = maint_cfg.get("persona", {})
             
             # 决定本次任务的主轴
@@ -534,8 +538,7 @@ class Supervisor:
         note_matches = re.findall(r'[\[【]SHOT[\]】][:：]?\s*(.*?)\s*[\[【]CONTENT[\]】][:：]?\s*(.*?)(?=[\[【]SHOT[\]】]|$)', summary, re.DOTALL)
         
         if note_matches:
-            maint_cfg = config.global_config.get("agent", {}).get("maintenance", {})
-            save_enabled = maint_cfg.get("save_titles_to_local", False)
+            save_enabled = config.agent.get("maintenance", {}).get("save_titles_to_local", False)
             
             for title, content in note_matches:
                 title = title.strip()
@@ -599,7 +602,7 @@ class Supervisor:
         self.last_discovery = summary
         
         # 从配置中读取初始值作为兜底，实现“继承”逻辑
-        maint_cfg = config.global_config.get("agent", {}).get("maintenance", {})
+        maint_cfg = config.agent.get("maintenance", {})
         
         rednote_sync_account_data(
             inspiration_pool=self.inspiration_pool,
@@ -635,9 +638,8 @@ class Supervisor:
         try:
             from skills.rednote.maintainer.scripts.rednote_sync_account_data import get_current_state
             state = get_current_state() or {}
-            agent_config = config.global_config.get("agent", {})
-            maint_cfg = agent_config.get("maintenance", {})
-            planner_config = agent_config.get("planner_model", {})
+            maint_cfg = config.agent.get("maintenance", {})
+            planner_config = config.agent.get("planner_model", {})
             persona = maint_cfg.get("persona", {})
 
             external_genes = maint_cfg.get("external_genes", ["洞察", "趋势", "红利"])
@@ -720,7 +722,7 @@ class Supervisor:
 
     def _get_current_task_type(self, now: datetime) -> Optional[str]:
         """根据 daily_schedule 配置判断当前应执行的任务类型"""
-        schedule = config.global_config["agent"]["maintenance"].get("daily_schedule", [])
+        schedule = config.agent["maintenance"].get("daily_schedule", [])
         current_time = now.strftime("%H:%M")
         for slot in schedule:
             if slot["start"] <= current_time < slot["end"]:

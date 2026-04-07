@@ -1,115 +1,25 @@
+import os
 import json
 import time
-import os
 import config
 import traceback
 import inspect
 import yaml
 from datetime import datetime
+
 import utils.logger as logger
 import utils.llm_client as llm_client
+
 import core.screenshot as screenshot
 import core.actions as actions
+
 from agent.skill_loader import SkillLoader, extract_json
 from agent.planner import Planner
-from agent.context_manager import ContextManager
+
+from runtime import context
+
 from prompts.action_prompt import ACTION_PROMPT
 from utils.token_logger import log_token_usage
-
-
-def _filter_available_skills(skills: dict) -> dict:
-    """根据配置过滤可供 Planner 使用的技能集合。"""
-    agent_config = config.global_config.get("agent", {})
-    skill_policy = agent_config.get("skill_selection", {})
-    disabled_skill_groups = set(skill_policy.get("disabled_skill_groups", []))
-    disabled_skills = set(skill_policy.get("disabled_skills", []))
-
-    if not disabled_skills and not disabled_skill_groups:
-        return skills
-
-    return {
-        name: meta
-        for name, meta in skills.items()
-        if name not in disabled_skills and meta.get("group") not in disabled_skill_groups
-    }
-
-def _call_llm(messages: list[dict], model: str, client_name: str, trace_id: str = "system", **kwargs) -> tuple[dict, str]:
-    """统一 LLM 调用，包含重试逻辑"""
-    max_retries = 3
-    retry_delay = 2
-    
-    for attempt in range(max_retries):
-        try:
-            client = llm_client.get_client(client_name)
-            
-            # 构建基础参数
-            params = {
-                "model": model,
-                "messages": messages,
-                "temperature": kwargs.get("temperature", 0.0),
-                "response_format": {"type": "json_object"}
-            }
-            
-            if "max_tokens" in kwargs:
-                params["max_tokens"] = kwargs["max_tokens"]
-
-            response = client.chat.completions.create(**params)
-            
-            # 记录 Token 消耗
-            usage = response.usage
-            if usage:
-                log_token_usage(
-                    trace_id=trace_id,
-                    model=model,
-                    prompt_tokens=usage.prompt_tokens,
-                    completion_tokens=usage.completion_tokens
-                )
-
-            raw = (response.choices[0].message.content or "").strip()
-            return extract_json(raw), raw
-            
-        except Exception as e:
-            if attempt < max_retries - 1:
-                logger.warning({
-                    "msg": f"LLM 调用失败，正在进行第 {attempt + 1} 次重试",
-                    "error": str(e),
-                    "retry_delay": retry_delay
-                }, trace_id)
-                time.sleep(retry_delay)
-                continue
-            else:
-                logger.error({"msg": "LLM 调用多次重试后依然失败", "error": str(e)}, trace_id)
-                raise e
-
-def _init_history(trace_id: str, user_goal: str):
-    """任务开始时初始化历史记录：写入 index.jsonl 并创建 trace_id.md 占位"""
-    try:
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        
-        # 1. 写入 index.jsonl (索引)
-        history_index_path = "history/index.jsonl"
-        if not os.path.exists("history"):
-            os.makedirs("history")
-        entry = {"dt": now, "trace_id": trace_id}
-        with open(history_index_path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-            
-        # 2. 创建 trace_id.md 初始占位
-        md_path = f"history/{trace_id}.md"
-        meta = {
-            "trace_id": trace_id,
-            "created_at": now,
-            "goal": user_goal,
-            "status": "running"
-        }
-        yaml_content = yaml.dump(meta, allow_unicode=True, sort_keys=False)
-        content = f"---\n{yaml_content}---\n\n# Task History: {trace_id}\n"
-        
-        with open(md_path, "w", encoding="utf-8") as f:
-            f.write(content)
-            
-    except Exception as e:
-        logger.error({"msg": "初始化历史记录失败", "error": str(e)})
 
 def run_task(trace_id: str, user_goal: str):
     """
@@ -131,12 +41,7 @@ def run_task(trace_id: str, user_goal: str):
     final_result = {"ok": True, "msg": "所有任务已完成"}
     
     # 获取子 Agent 配置
-    agent_config = config.global_config.get("agent", {})
-    sub_agent_config = agent_config.get("sub_agent_model", {
-        "model": "google/gemini-3-flash-preview",
-        "llm_client": "zenmux",
-        "temperature": 0.0
-    })
+    operator_config = config.agent.get("operator", {})
 
     for i, sub_task in enumerate(plan):
         # 检查是否被强杀
@@ -171,9 +76,9 @@ def run_task(trace_id: str, user_goal: str):
                 sub_goal=sub_goal,
                 skill_name=skill_name,
                 loader=loader,
-                model=sub_agent_config.get("model"),
-                client_name=sub_agent_config.get("llm_client"),
-                temperature=sub_agent_config.get("temperature", 0.0)
+                model=operator_config.get("model"),
+                client_name=operator_config.get("llm_client"),
+                temperature=operator_config.get("temperature", 0.0)
             )
             
             if not result.get("ok"):
@@ -203,12 +108,11 @@ def run_react_loop(trace_id: str, sub_goal: str, skill_name: str, loader: SkillL
     核心 ReAct 循环 (针对单个子目标)
     """
     # 初始化上下文
-    ctx = ContextManager(max_rounds=12)
     dialogue_history = []
     
     # 构建 System Prompt
-    screen_width = config.global_config["screen_size"]["width"]
-    screen_height = config.global_config["screen_size"]["height"]
+    screen_width = config.system["screen_size"]["width"]
+    screen_height = config.system["screen_size"]["height"]
     current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
     action = ACTION_PROMPT.format(
@@ -233,10 +137,13 @@ def run_react_loop(trace_id: str, sub_goal: str, skill_name: str, loader: SkillL
         2. **严禁过度执行**：即便挂载的“专家技能”中有后续步骤（如登录、点击、输入），只要你视觉确认"{sub_goal}"已经达成，你必须【立即】输出 `finish` 动作。
         3. **完成判定逻辑**：在执行任何动作前，先问自己：“目标是否已达成？”。如果是，调用 `finish`。例如：如果目标是“打开页面”，页面一旦加载完成（即便弹出了登录框），你也必须立即 `finish`，严禁擅自执行登录连招。
     """
-    ctx.set_system_prompt(system_prompt)
+    context.agent["message"]["system"] = {"role": "system", "content": system_prompt}
 
     last_result = {"ok": True, "message": "任务开始"}
 
+    #清空分析过程
+    context.agent["message"]["user"] = []
+    context.agent["message"]["assistant"] = []
     for step in range(max_steps):
         # 0. 检查是否被强杀 (每一拍都检查)
         from agent.supervisor import supervisor
@@ -253,23 +160,35 @@ def run_react_loop(trace_id: str, sub_goal: str, skill_name: str, loader: SkillL
             {"type": "text", "text": user_text},
             {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_base64}"}}
         ]
-        ctx.add_user_message(user_content)
+
+        context.agent["message"]["user"].append({"role": "user", "content": user_content})
+
+        _max = context.agent["max_rounds"]
+        context.agent["message"]["user"] = context.agent["message"]["user"][-_max:]
+
+        #注意，[ {system} ], Dict to List
+        _message = [context.agent["message"]["system"]]
+        _message += context.agent["message"]["user"]
+        _message += context.agent["message"]["assistant"]
 
         # 3. 大脑决策
         try:
             action_obj, raw = _call_llm(
-                messages=ctx.get_messages(), 
+                ###
+                messages=_message, 
                 model=model, 
                 client_name=client_name, 
                 trace_id=trace_id,
                 temperature=temperature
             )
             # 放弃 print，全部改用 logger.info
-            #llm_str = ctx.get_messages()
             logger.info({"msg": f"Step {step} LLM Raw Output", "raw": raw}, trace_id)
             
-            ctx.add_assistant_message(raw)
-            
+            context.agent["message"]["assistant"].append({"role": "assistant", "content": raw})
+
+            _max = context.agent["max_rounds"]
+            context.agent["message"]["assistant"] = context.agent["message"]["assistant"][-_max:]
+
             # 兼容处理：如果 LLM 返回的是列表（连招），提取第一个动作的 thought
             thought = ""
             if isinstance(action_obj, list) and len(action_obj) > 0:
@@ -394,10 +313,100 @@ def run_react_loop(trace_id: str, sub_goal: str, skill_name: str, loader: SkillL
         # 5. 更新上下文并截图
         last_result = step_results # 更新给下一步的参考
         time.sleep(0.5)
-        # ctx.add_observation(...) 报错，因为 ContextManager 没有这个方法
         # 统一使用 add_user_message 来传递观测结果
         # 注意：图片在下一次循环开始时通过 screenshot.get_screenshot_base64 获取并添加
     
     return {"ok": False, "error": "达到最大步数"}, dialogue_history
 
-    return {"ok": False, "error": "达到最大步数"}
+def _filter_available_skills(skills: dict) -> dict:
+    """根据配置过滤可供 Planner 使用的技能集合。"""
+    skill_policy = config.agent.get("skill_selection", {})
+    disabled_skill_groups = set(skill_policy.get("disabled_skill_groups", []))
+    disabled_skills = set(skill_policy.get("disabled_skills", []))
+
+    if not disabled_skills and not disabled_skill_groups:
+        return skills
+
+    return {
+        name: meta
+        for name, meta in skills.items()
+        if name not in disabled_skills and meta.get("group") not in disabled_skill_groups
+    }
+
+def _call_llm(messages: list[dict], model: str, client_name: str, trace_id: str = "system", **kwargs) -> tuple[dict, str]:
+    """统一 LLM 调用，包含重试逻辑"""
+    max_retries = 3
+    retry_delay = 2
+    
+    for attempt in range(max_retries):
+        try:
+            client = llm_client.get_client(client_name)
+            
+            # 构建基础参数
+            params = {
+                "model": model,
+                "messages": messages,
+                "temperature": kwargs.get("temperature", 0.0),
+                "response_format": {"type": "json_object"}
+            }
+            
+            if "max_tokens" in kwargs:
+                params["max_tokens"] = kwargs["max_tokens"]
+
+            response = client.chat.completions.create(**params)
+            
+            # 记录 Token 消耗
+            usage = response.usage
+            if usage:
+                log_token_usage(
+                    trace_id=trace_id,
+                    model=model,
+                    prompt_tokens=usage.prompt_tokens,
+                    completion_tokens=usage.completion_tokens
+                )
+
+            raw = (response.choices[0].message.content or "").strip()
+            return extract_json(raw), raw
+            
+        except Exception as e:
+            if attempt < max_retries - 1:
+                logger.warning({
+                    "msg": f"LLM 调用失败，正在进行第 {attempt + 1} 次重试",
+                    "error": str(e),
+                    "retry_delay": retry_delay
+                }, trace_id)
+                time.sleep(retry_delay)
+                continue
+            else:
+                logger.error({"msg": "LLM 调用多次重试后依然失败", "error": str(e)}, trace_id)
+                raise e
+
+def _init_history(trace_id: str, user_goal: str):
+    """任务开始时初始化历史记录：写入 index.jsonl 并创建 trace_id.md 占位"""
+    try:
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
+        # 1. 写入 index.jsonl (索引)
+        history_index_path = "history/index.jsonl"
+        if not os.path.exists("history"):
+            os.makedirs("history")
+        entry = {"dt": now, "trace_id": trace_id}
+        with open(history_index_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            
+        # 2. 创建 trace_id.md 初始占位
+        md_path = f"history/{trace_id}.md"
+        meta = {
+            "trace_id": trace_id,
+            "created_at": now,
+            "goal": user_goal,
+            "status": "running"
+        }
+        yaml_content = yaml.dump(meta, allow_unicode=True, sort_keys=False)
+        content = f"---\n{yaml_content}---\n\n# Task History: {trace_id}\n"
+        
+        with open(md_path, "w", encoding="utf-8") as f:
+            f.write(content)
+            
+    except Exception as e:
+        logger.error({"msg": "初始化历史记录失败", "error": str(e)})

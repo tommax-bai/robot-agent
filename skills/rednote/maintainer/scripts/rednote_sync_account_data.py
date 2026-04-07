@@ -4,8 +4,8 @@ import datetime
 import utils.logger as logger
 import config
 
-STATE_FILE = config.global_config["agent"]["maintenance"]["state_file"]
-LIMITS = config.global_config["agent"]["state_limits"]
+STATE_FILE = config.agent["maintenance"]["state_file"]
+LIMITS = config.agent["state_limits"]
 
 def _merge_and_trim(existing: list, new_items: list, limit: int) -> list:
     """有序去重追加，超出上限时从头部淘汰最旧的条目。"""
