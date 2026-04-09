@@ -1,7 +1,7 @@
 import json
 from typing import List, Dict
 import utils.llm_client as llm_client
-from agent.skill_loader import extract_json
+from agents.skill.loader import extract_json
 from prompts.planner_prompt import PLANNER_PROMPT
 import config
 
@@ -34,7 +34,7 @@ class Planner:
 
         try:
             # 引入 _call_llm 统一调用逻辑以记录 Token
-            from agent.operator import _call_llm
+            from agents.operator import _call_llm
             plan_data, raw_content = _call_llm(
                 messages=[{"role": "user", "content": prompt}],
                 model=self.model,

@@ -1,5 +1,6 @@
 import config
 from runtime import context
+from utils import logger
 
 
 def llm_to_screen(x: float, y: float) -> tuple[int, int]:
@@ -19,7 +20,13 @@ def llm_to_screen(x: float, y: float) -> tuple[int, int]:
     pixel_x = x * (screen_w / 1000)
     pixel_y = y * (screen_h / 1000)
 
+    # pixel_x, pixel_y = x, y
+
     pixel_x += context.core["window"]["x"]
     pixel_y += context.core["window"]["y"]
+
+    logger.info(f"屏幕尺寸: {screen_w}x{screen_h}")
+    logger.info(f"窗口位置: ({context.core['window']['x']}, {context.core['window']['y']}, {context.core['window']['w']}, {context.core['window']['h']})")
+    logger.info(f"坐标转换: ({x}, {y}) -> ({pixel_x}, {pixel_y})")
 
     return int(round(pixel_x)), int(round(pixel_y))

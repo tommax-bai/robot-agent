@@ -3,8 +3,8 @@ import uuid
 import asyncio
 import websockets
 import httpx
-from agent.operator import run_task
-from agent.supervisor import supervisor, AgentMode
+from agents.operator import run_task
+from agents.supervisor import supervisor, AgentMode
 from dto.agent import AgentRequest
 import config
 import utils.logger as logger

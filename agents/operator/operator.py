@@ -13,8 +13,8 @@ import utils.llm_client as llm_client
 import core.screenshot as screenshot
 import core.actions as actions
 
-from agent.skill_loader import SkillLoader, extract_json
-from agent.planner import Planner
+from agents.skill.loader import SkillLoader, extract_json
+from agents.planner import Planner
 
 from runtime import context
 
@@ -45,7 +45,7 @@ def run_task(trace_id: str, user_goal: str):
 
     for i, sub_task in enumerate(plan):
         # 检查是否被强杀
-        from agent.supervisor import supervisor
+        from agents.supervisor import supervisor
         if supervisor.is_aborted(trace_id):
             logger.warning({"msg": "任务执行被 Supervisor 强行中断"}, trace_id)
             return {"ok": False, "error": "Task aborted by supervisor"}
@@ -107,6 +107,9 @@ def run_react_loop(trace_id: str, sub_goal: str, skill_name: str, loader: SkillL
     """
     核心 ReAct 循环 (针对单个子目标)
     """
+   
+    logger.info("开始ReAct循环")
+
     # 初始化上下文
     dialogue_history = []
     
@@ -116,14 +119,13 @@ def run_react_loop(trace_id: str, sub_goal: str, skill_name: str, loader: SkillL
     current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
     action = ACTION_PROMPT.format(
-        SCREEN_WIDTH=screen_width, 
-        SCREEN_HEIGHT=screen_height,
         CURRENT_TIME=current_time
     )
     skill_content = ""
     if skill_name:
         skill_content = loader.build_skill_prompt([skill_name])
     
+
     # 重新定义系统提示词的结构，强化子目标的边界控制
     system_prompt = f"""
         {action}
@@ -137,16 +139,17 @@ def run_react_loop(trace_id: str, sub_goal: str, skill_name: str, loader: SkillL
         2. **严禁过度执行**：即便挂载的“专家技能”中有后续步骤（如登录、点击、输入），只要你视觉确认"{sub_goal}"已经达成，你必须【立即】输出 `finish` 动作。
         3. **完成判定逻辑**：在执行任何动作前，先问自己：“目标是否已达成？”。如果是，调用 `finish`。例如：如果目标是“打开页面”，页面一旦加载完成（即便弹出了登录框），你也必须立即 `finish`，严禁擅自执行登录连招。
     """
-    context.agent["message"]["system"] = {"role": "system", "content": system_prompt}
+    context.agent["messages"]["system"] = {"role": "system", "content": system_prompt}
+    #logger.info(context.agent["messages"]["system"])
 
     last_result = {"ok": True, "message": "任务开始"}
 
     #清空分析过程
-    context.agent["message"]["user"] = []
-    context.agent["message"]["assistant"] = []
+    context.agent["messages"]["user"] = []
+    context.agent["messages"]["assistant"] = []
     for step in range(max_steps):
         # 0. 检查是否被强杀 (每一拍都检查)
-        from agent.supervisor import supervisor
+        from agents.supervisor import supervisor
         if supervisor.is_aborted(trace_id):
             logger.warning({"msg": "ReAct 循环被 Supervisor 强行中断"}, trace_id)
             return {"ok": False, "error": "Task aborted by supervisor"}, dialogue_history
@@ -161,15 +164,15 @@ def run_react_loop(trace_id: str, sub_goal: str, skill_name: str, loader: SkillL
             {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_base64}"}}
         ]
 
-        context.agent["message"]["user"].append({"role": "user", "content": user_content})
+        context.agent["messages"]["user"].append({"role": "user", "content": user_content})
 
         _max = context.agent["max_rounds"]
-        context.agent["message"]["user"] = context.agent["message"]["user"][-_max:]
+        context.agent["messages"]["user"] = context.agent["messages"]["user"][-_max:]
 
         #注意，[ {system} ], Dict to List
-        _message = [context.agent["message"]["system"]]
-        _message += context.agent["message"]["user"]
-        _message += context.agent["message"]["assistant"]
+        _message = [context.agent["messages"]["system"]]
+        _message += context.agent["messages"]["user"]
+        _message += context.agent["messages"]["assistant"]
 
         # 3. 大脑决策
         try:
@@ -182,12 +185,13 @@ def run_react_loop(trace_id: str, sub_goal: str, skill_name: str, loader: SkillL
                 temperature=temperature
             )
             # 放弃 print，全部改用 logger.info
+            logger.info({"assistant": context.agent["messages"]["assistant"]})
             logger.info({"msg": f"Step {step} LLM Raw Output", "raw": raw}, trace_id)
             
-            context.agent["message"]["assistant"].append({"role": "assistant", "content": raw})
+            context.agent["messages"]["assistant"].append({"role": "assistant", "content": raw})
 
             _max = context.agent["max_rounds"]
-            context.agent["message"]["assistant"] = context.agent["message"]["assistant"][-_max:]
+            context.agent["messages"]["assistant"] = context.agent["messages"]["assistant"][-_max:]
 
             # 兼容处理：如果 LLM 返回的是列表（连招），提取第一个动作的 thought
             thought = ""
@@ -214,7 +218,7 @@ def run_react_loop(trace_id: str, sub_goal: str, skill_name: str, loader: SkillL
             return {"ok": False, "error": f"LLM 决策失败: {e}"}, dialogue_history
 
         # --- 核心防线：决策返回后立即再次检查强杀信号 ---
-        from agent.supervisor import supervisor
+        from agents.supervisor import supervisor
         if supervisor.is_aborted(trace_id):
             logger.warning({"msg": "LLM 已返回决策，但检测到强杀信号，放弃执行动作"}, trace_id)
             return {"ok": False, "error": "Task aborted by supervisor after LLM call"}, dialogue_history
@@ -244,7 +248,7 @@ def run_react_loop(trace_id: str, sub_goal: str, skill_name: str, loader: SkillL
         for idx, current_action in enumerate(action_list):
             # --- 核心防线：连招中场检查 ---
             # 确保在执行长连招（多个动作）的过程中，也能被随时中断
-            from agent.supervisor import supervisor
+            from agents.supervisor import supervisor
             if supervisor.is_aborted(trace_id):
                 logger.warning({"msg": "连招执行中检测到强杀信号，立即中断"}, trace_id)
                 return {"ok": False, "error": "Task aborted during action sequence"}, dialogue_history
@@ -291,7 +295,7 @@ def run_react_loop(trace_id: str, sub_goal: str, skill_name: str, loader: SkillL
                     step_results.append({"method": method, "result": action_res})
 
                 if len(action_list) > 1 and idx < len(action_list) - 1:
-                    wait_time = current_action.get("delay", 0) + 1
+                    wait_time = current_action.get("delay", 0) + 0.5
 
                     logger.info({"msg": f"连招间隙等待 {wait_time} 秒..."}, trace_id)
                     time.sleep(wait_time)
@@ -321,7 +325,7 @@ def run_react_loop(trace_id: str, sub_goal: str, skill_name: str, loader: SkillL
 def _filter_available_skills(skills: dict) -> dict:
     """根据配置过滤可供 Planner 使用的技能集合。"""
     skill_policy = config.agent.get("skill_selection", {})
-    disabled_skill_groups = set(skill_policy.get("disabled_skill_groups", []))
+    disabled_skill_groups = set(skill_policy.get("disabled_skill_groups", []) )
     disabled_skills = set(skill_policy.get("disabled_skills", []))
 
     if not disabled_skills and not disabled_skill_groups:

@@ -8,7 +8,7 @@ from enum import Enum
 from datetime import datetime
 from typing import Optional, Dict, Any, List
 import utils.logger as logger
-from agent.operator import run_task
+from agents.operator.operator import run_task
 from core.cleanup import cleanup_chrome_environment
 import config
 
@@ -166,6 +166,8 @@ class Supervisor:
                 self._harvest_knowledge(summary, trace_id)
                 
             return result
+        except Exception as e:
+            logger.error({"msg": "execute_task异常", "error": str(e)})
         finally:
             if trace_id in self.aborted_trace_ids:
                 async def delayed_remove(tid):

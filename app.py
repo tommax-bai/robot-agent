@@ -20,7 +20,7 @@ async def lifespan(app: FastAPI):
     utils_init.init()
     
     # 启动 Supervisor 的养号循环
-    from agent.supervisor import supervisor
+    from agents.supervisor import supervisor
     supervisor.start_scheduler()
 
     yield  # 在这里 yield 表示应用正在运行

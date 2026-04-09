@@ -44,7 +44,7 @@ def do_actions_step(trace_id: str, data: dict) -> dict:
                 logger.info(f"move and click {x},{y}")
                 pyautogui.moveTo(x=x, y=y)
                 pyautogui.click(x=x, y=y)
-                return {"ok": True, "message": f"点击成功 ({x}, {y})", "finish": finish}
+                return {"ok": True, "message": f"点击操作已执行 ({x}, {y})", "finish": finish}
 
             case "dblclick":
                 x_val = get_param(params, "x")
@@ -52,7 +52,7 @@ def do_actions_step(trace_id: str, data: dict) -> dict:
                 x, y = llm_to_screen(float(x_val), float(y_val))
                 pyautogui.moveTo(x=x, y=y)
                 pyautogui.doubleClick(x=x, y=y)
-                return {"ok": True, "message": f"双击成功 ({x}, {y})", "finish": finish}
+                return {"ok": True, "message": f"双击操作已执行 ({x}, {y})", "finish": finish}
 
             case "move":
                 x_val = get_param(params, "x")
@@ -60,7 +60,7 @@ def do_actions_step(trace_id: str, data: dict) -> dict:
                 x, y = llm_to_screen(float(x_val), float(y_val))
                 logger.info(f"move to {x},{y}")
                 pyautogui.moveTo(x=x, y=y)
-                return {"ok": True, "message": f"移动成功 ({x}, {y})", "finish": finish}
+                return {"ok": True, "message": f"移动操作已执行 ({x}, {y})", "finish": finish}
 
             case "scroll":
                 clicks = int(get_param(params, "clicks", 1))
@@ -81,7 +81,7 @@ def do_actions_step(trace_id: str, data: dict) -> dict:
                     direction = 1 if clicks > 0 else -1
                     
                     # 限制单次执行的最大滚动量，防止“疯狂滚动”
-                    max_total_clicks = 800
+                    max_total_clicks = 200
                     if abs_clicks > max_total_clicks:
                         abs_clicks = max_total_clicks
                     
@@ -111,7 +111,7 @@ def do_actions_step(trace_id: str, data: dict) -> dict:
                     pyautogui.moveTo(sx1, sy1)
                     pyautogui.scroll(clicks)
                 
-                return {"ok": True, "message": f"滚动成功 (方向:{'上' if clicks > 0 else '下'}, 强度:{abs(clicks)})", "finish": finish}
+                return {"ok": True, "message": f"滚动操作已执行 (方向:{'上' if clicks > 0 else '下'}, 强度:{abs(clicks)})", "finish": finish}
 
             case "drag":
                 x1 = float(get_param(params, "x1"))
@@ -121,7 +121,7 @@ def do_actions_step(trace_id: str, data: dict) -> dict:
                 sx1, sy1 = llm_to_screen(x1, y1)
                 sx2, sy2 = llm_to_screen(x2, y2)
                 human_drag(sx1, sy1, sx2, sy2)
-                return {"ok": True, "message": "拖动成功", "finish": finish}
+                return {"ok": True, "message": "拖动操作已执行", "finish": finish}
 
             case "paste":
                 text = get_param(params, "text", "")
@@ -129,22 +129,22 @@ def do_actions_step(trace_id: str, data: dict) -> dict:
                 platform = config.system["system_info"]
                 modifier = "command" if platform == "darwin" else "ctrl"
                 pyautogui.hotkey(modifier, 'v')
-                return {"ok": True, "message": "粘贴成功", "finish": finish}
+                return {"ok": True, "message": "粘贴操作已执行", "finish": finish}
 
             case "copy":
                 text = get_param(params, "text", "")
                 pyperclip.copy(text)
-                return {"ok": True, "message": "复制成功", "finish": finish}
+                return {"ok": True, "message": "复制操作已执行", "finish": finish}
 
             case "wait":
                 ms = get_param(params, "milliseconds", 0)
                 time.sleep(float(ms) / 1000.0)
-                return {"ok": True, "message": "等待成功", "finish": finish}
+                return {"ok": True, "message": "等待操作已执行", "finish": finish}
 
             case "hotkey":
                 keys = get_param(params, "keys", "")
                 pyautogui.hotkey(*keys.split("+"))
-                return {"ok": True, "message": "快捷键成功", "finish": finish}
+                return {"ok": True, "message": "快捷键操作已执行", "finish": finish}
 
             case _:
                 return {"ok": False, "message": f"不支持的动作: {method}", "error": "unsupported action", "finish": finish}

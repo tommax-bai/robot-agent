@@ -50,8 +50,8 @@ model = {
 
 # 智能体大脑与灵感配置
 agent = {
-    #"default_mode": "patrolling",
-    "default_mode": "waiting",
+    "default_mode": "patrolling",
+    #"default_mode": "waiting",
     # E1 - 技能选择策略
     "skill_selection": {
         # 显式禁用的一级技能分组（对应 skills/ 下第一级目录），例如: rednote_app、rednote、douyin_web
@@ -168,7 +168,7 @@ agent = {
         "reply_probability": 0.8,
         # 每日任务日程表：按时间段分配任务类型 (patrol=巡逻, dm=私信, post=发帖，cr=评论)
         "daily_schedule": [
-            #{"start": "08:00", "end": "11:00", "task": "patrol"},
+            {"start": "08:00", "end": "22:00", "task": "patrol"},
             #{"start": "11:00", "end": "13:00", "task": "dm"},
             #{"start": "13:00", "end": "23:00", "task": "patrol"},
         ],
