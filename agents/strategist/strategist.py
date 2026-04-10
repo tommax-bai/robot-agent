@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING
 import config
 import utils.logger as logger
 from agents.base import StrategistError
+from services.knowledge import EvolutionContext
 from utils.prompt_template import load_prompt_template
 
 if TYPE_CHECKING:
@@ -33,14 +34,6 @@ if TYPE_CHECKING:
 @dataclass(frozen=True)
 class BrainstormResult:
     topics: list[str]
-
-
-@dataclass(frozen=True)
-class EvolutionContext:
-    home_weight: float
-    search_weight: float
-    is_mature: bool
-    total_knowledge: int
 
 
 class Strategist:

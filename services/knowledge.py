@@ -4,20 +4,30 @@
 设计原则：
 - 所有函数都接收 state repo，不再依赖 default_repo() 或全局函数
 - harvest_knowledge 通过副作用更新 state，无返回值
-- get_evolution_context 是纯查询，返回新 dict
+- get_evolution_context 是纯查询，返回 EvolutionContext dataclass
 """
 from __future__ import annotations
 
 import os
 import re
+from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 import config
 import utils.logger as logger
 
 if TYPE_CHECKING:
     from services.agent_state import AgentStateRepo
+
+
+@dataclass(frozen=True)
+class EvolutionContext:
+    """Agent 的进化状态与注意力权重"""
+    home_weight: float
+    search_weight: float
+    is_mature: bool
+    total_knowledge: int
 
 
 def harvest_knowledge(summary: str, trace_id: str, state: "AgentStateRepo") -> None:
@@ -108,7 +118,7 @@ def _save_note_detail(title: str, content: str) -> None:
         logger.error({"msg": "保存笔记详情失败", "error": str(e)})
 
 
-def get_evolution_context(state: "AgentStateRepo", title_few_shots: list[str]) -> dict[str, Any]:
+def get_evolution_context(state: "AgentStateRepo", title_few_shots: list[str]) -> EvolutionContext:
     """
     计算 Agent 的进化状态与注意力权重。
     基于 agent_state 的丰富程度决定 首页 vs 搜索 的比例。
@@ -121,11 +131,11 @@ def get_evolution_context(state: "AgentStateRepo", title_few_shots: list[str]) -
     )
 
     home_weight = 0.10 if total_knowledge < 100 else 0.30
-    return {
-        "home_weight": home_weight,
-        "search_weight": 1.0 - home_weight,
-        "is_mature": total_knowledge > 30,
-        "total_knowledge": total_knowledge,
-    }
+    return EvolutionContext(
+        home_weight=home_weight,
+        search_weight=1.0 - home_weight,
+        is_mature=total_knowledge > 30,
+        total_knowledge=total_knowledge,
+    )
 
 

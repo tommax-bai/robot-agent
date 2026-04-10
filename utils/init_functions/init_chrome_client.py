@@ -300,37 +300,71 @@ class ChromeClient:
         except Exception:  
             return False  
   
-    def _start_chrome(self) -> bool:  
-        """启动 Chrome"""  
-        try:  
-            os.makedirs(config.system['chrome']['profile_dir'], exist_ok=True)  
-            cmd = config.system['chrome']['chrome_command']  
+    def _start_chrome(self) -> bool:
+        """启动 Chrome 并轮询 debug port 直到就绪"""
+        try:
+            os.makedirs(config.system['chrome']['profile_dir'], exist_ok=True)
+            cmd = config.system['chrome']['chrome_command']
+
+            # 预检查：binary 是否存在
+            chrome_binary = cmd[0] if cmd else None
+            if not chrome_binary or not os.path.exists(chrome_binary):
+                logger.error({
+                    "msg": "Chrome 可执行文件不存在",
+                    "path": chrome_binary,
+                    "hint": "请下载 Chrome for Testing 或设置 CHROME_BINARY 环境变量",
+                })
+                return False
+
+            # chromedriver 同样预检查（_connect_chrome 阶段会用）
+            chromedriver_path = config.system['chrome'].get('chromedriver_path')
+            if chromedriver_path and not os.path.exists(chromedriver_path):
+                logger.error({
+                    "msg": "ChromeDriver 不存在",
+                    "path": chromedriver_path,
+                    "hint": "请下载与 Chrome 同版本的 chromedriver 或设置 CHROMEDRIVER_PATH 环境变量",
+                })
+                return False
+
             logger.info(f"正在启动 Chrome: {' '.join(cmd)}")
-  
-            kwargs = {  
-                "stdout": subprocess.DEVNULL,  
-                "stderr": subprocess.DEVNULL,  
-            }  
-  
-            if config.system['system_info'] == "win32":  
-                startupinfo = subprocess.STARTUPINFO()  
-                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW  
-                startupinfo.wShowWindow = subprocess.SW_HIDE  
-                kwargs["startupinfo"] = startupinfo  
-  
-            subprocess.Popen(cmd, **kwargs)  
-  
-            # 增加等待时间，从 10秒 增加到 15秒
-            for _ in range(30):  
-                time.sleep(0.5)  
-                if self._is_debug_port_active():  
+
+            kwargs = {
+                "stdout": subprocess.DEVNULL,
+                "stderr": subprocess.DEVNULL,
+            }
+            if config.system['system_info'] == "win32":
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startupinfo.wShowWindow = subprocess.SW_HIDE
+                kwargs["startupinfo"] = startupinfo
+
+            proc = subprocess.Popen(cmd, **kwargs)
+
+            # 轮询 debug port，同时检测子进程是否已退出
+            for _ in range(30):
+                time.sleep(0.5)
+                # 检测子进程是否还活着（None 表示运行中）
+                if proc.poll() is not None:
+                    logger.error({
+                        "msg": "Chrome 子进程意外退出",
+                        "exit_code": proc.returncode,
+                        "cmd": cmd,
+                    })
+                    return False
+                if self._is_debug_port_active():
                     logger.info("Chrome 调试端口已激活，等待 2 秒确保服务就绪...")
-                    time.sleep(2) # 额外等待，确保 CDP 服务完全启动
-                    return True  
-            return False  
-        except Exception as e:  
-            logger.error(f"启动 Chrome 失败: {e}")  
-            return False  
+                    time.sleep(2)
+                    return True
+
+            logger.error({
+                "msg": "Chrome 启动超时（15s 内 debug port 未激活）",
+                "debug_port": config.system['chrome']['debug_port'],
+                "cmd": cmd,
+            })
+            return False
+        except Exception as e:
+            logger.error({"msg": "启动 Chrome 失败", "error": str(e)})
+            return False
   
     def _connect_chrome(self) -> Optional[webdriver.Chrome]:  
         """连接 Chrome，增加重试机制以应对启动时的不稳定状态"""  
@@ -386,16 +420,21 @@ class ChromeClient:
 _instance: Optional[ChromeClient] = None  
   
   
-def init_chrome_client() -> ChromeClient:  
-    """初始化 Chrome 客户端"""  
-    global _instance  
-    if _instance is not None:  
-        return _instance  
-  
-    _instance = ChromeClient()  
-    if not _instance.start():  
-        _instance = None  
-        raise RuntimeError("Chrome 启动失败")  
+def init_chrome_client() -> ChromeClient:
+    """初始化 Chrome 客户端"""
+    global _instance
+    if _instance is not None:
+        return _instance
+
+    _instance = ChromeClient()
+    if not _instance.start():
+        _instance = None
+        raise RuntimeError(
+            "Chrome 启动失败 — 请查看上方 logger 输出定位根因。"
+            "常见原因：(1) chrome_binary 路径不存在 (2) chromedriver 路径不存在 "
+            "(3) debug port 被占用 (4) 子进程立即崩溃。"
+            "可通过环境变量 CHROME_BINARY / CHROMEDRIVER_PATH 覆盖默认路径。"
+        )
   
     logger.info("Chrome 客户端初始化成功")  
     return _instance  
@@ -408,10 +447,23 @@ def get_chrome() -> ChromeClient:
     return _instance  
   
   
-def close_chrome_client():  
-    """关闭"""  
-    global _instance  
-    if _instance:  
-        _instance.stop()  
-        _instance = None  
-        logger.info("Chrome 客户端已关闭")  
+def close_chrome_client():
+    """关闭"""
+    global _instance
+    if _instance:
+        _instance.stop()
+        _instance = None
+        logger.info("Chrome 客户端已关闭")
+
+
+def disable_chrome_auto_restart() -> None:
+    """快速停止 Chrome 监控线程的"自动重启 Chrome"行为。
+
+    用于关闭流程：当 SIGINT 把 Chrome 子进程一并杀掉后，监控线程会在 3 秒
+    内检测到 debug port 失效并立即重启 Chrome——这会让用户以为关不掉。
+    在 supervisor.shutdown 之前调一下这个函数，让监控循环立即退出，避免
+    与关闭流程赛跑。本函数不会真正 quit driver，由 close_chrome_client 完成。
+    """
+    if _instance is not None:
+        _instance._running = False
+

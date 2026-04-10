@@ -11,3 +11,8 @@ history/
 logs/
 logs/token_usage/
 debug_screenshot.jpg
+
+chrome.zip
+chrome-mac-arm64/
+chromedriver.zip
+chromedriver-mac-arm64/

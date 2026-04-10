@@ -139,10 +139,10 @@ async def post_round(sv: "Supervisor") -> None:
 
     # 2. 冷启动门槛
     evo = get_evolution_context(sv.state, snapshot["title_few_shots"])
-    if evo["total_knowledge"] < _POST_COLD_START_THRESHOLD:
+    if evo.total_knowledge < _POST_COLD_START_THRESHOLD:
         logger.info({
             "msg": "冷启动期，跳过发帖，等待知识积累",
-            "knowledge": evo["total_knowledge"],
+            "knowledge": evo.total_knowledge,
             "threshold": _POST_COLD_START_THRESHOLD,
         })
         await asyncio.sleep(_POST_COLD_START_BACKOFF)

@@ -186,6 +186,17 @@ class Supervisor:
             self._scheduler_task = asyncio.create_task(run_schedule_loop(self))
             logger.info({"msg": "统一调度器已启动"})
 
+    def request_cancel(self, reason: str = "external") -> None:
+        """非阻塞地请求停止当前一切活动：调度循环 + 当前任务的 cancel token。
+
+        给信号处理器（SIGINT/SIGTERM）等"不能 await"的调用方使用。
+        实际等待退出由调用方在 await 上下文里另行处理（例如 shutdown）。
+        """
+        if self._current_run is not None:
+            self._current_run.ctx.cancel.cancel(reason)
+        if self._scheduler_task is not None and not self._scheduler_task.done():
+            self._scheduler_task.cancel()
+
     async def shutdown(self) -> None:
         """优雅关闭：取消调度循环、终止当前任务、等待退出"""
         logger.info({"msg": "Supervisor 正在关闭"})

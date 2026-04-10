@@ -1,5 +1,6 @@
 
 from agents.base import StrategistError
-from .strategist import Strategist, BrainstormResult, EvolutionContext
+from services.knowledge import EvolutionContext
+from .strategist import Strategist, BrainstormResult
 
 __all__ = ["Strategist", "BrainstormResult", "EvolutionContext", "StrategistError"]
