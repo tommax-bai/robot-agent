@@ -1,4 +1,4 @@
 
-from .supervisor import supervisor, AgentMode
+from .supervisor import Supervisor, AgentMode, ActiveRun
 
-__all__ = ["supervisor", "AgentMode"]
+__all__ = ["Supervisor", "AgentMode", "ActiveRun"]

@@ -1,9 +1,8 @@
 from functools import lru_cache
-import config
 from openai import OpenAI
 import config
 
-@lru_cache(maxsize = config.model["lru_cache_max_size"])
+@lru_cache(maxsize=config.model["lru_cache_max_size"])
 def get_client(client_name: str) -> OpenAI:
     client_config = config.model["clients"].get(client_name, None)
     if not client_config:

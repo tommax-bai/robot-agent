@@ -347,7 +347,7 @@ class ChromeClient:
                 if config.system['system_info'] == "win32":  
                     service = webdriver.ChromeService(log_output=subprocess.DEVNULL)  
                 else:  
-                    service = webdriver.ChromeService(executable_path="/Users/baitianxing/codes/chromedriver-mac-arm64/chromedriver", log_output=os.devnull)  
+                    service = webdriver.ChromeService(executable_path=config.system["chrome"]["chromedriver_path"], log_output=os.devnull)  
       
                 driver = webdriver.Chrome(service=service, options=options)
                 # 简单检查连接是否真的有效

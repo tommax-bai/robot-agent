@@ -1,5 +1,13 @@
 import os
 
+def _load_text_file(path: str, default: str = "") -> str:
+    """从文件加载文本内容，失败则返回默认值"""
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read().strip()
+    except FileNotFoundError:
+        return default
+
 system = {
     # 屏幕尺寸，无需修改，程序初始化时会自动设置，并打印日志
     "screen_size": {
@@ -21,10 +29,14 @@ system = {
         "debug_port": 9222,
         # E3 - 用户数据目录
         "profile_dir": os.path.join(os.path.expanduser("~"), "chrome_debug_profile"),
-        # E0 - 用于启动Chrome的命令。 
+        # E0 - 用于启动Chrome的命令。
         "chrome_command": None,
         # E3 - Chrome-ip 因chrome安全策略限制，因此无法设置成公网，不建议修改
         "chrome_ip": "127.0.0.1",
+        # Chrome 可执行文件路径（macOS），通过环境变量或此处配置
+        "chrome_binary": os.getenv("CHROME_BINARY", os.path.join(os.path.expanduser("~"), "codes/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing")),
+        # ChromeDriver 路径（macOS），通过环境变量或此处配置
+        "chromedriver_path": os.getenv("CHROMEDRIVER_PATH", os.path.join(os.path.expanduser("~"), "codes/chromedriver-mac-arm64/chromedriver")),
     }
 }
 # 大模型相关配置，如何OpenAI标准的 LLM、VLM 均可在这配置
@@ -59,17 +71,6 @@ agent = {
         # 显式禁用的技能名列表；被禁用的技能不会暴露给 Planner，执行阶段也会兜底跳过
         "disabled_skills": [],
     },
-    # E1 - 初始灵感池关键词 (AI 职业导航核心信号词)
-    "inspiration_pool": [
-        "大模型数据溢价", "RLHF人类反馈价值", "程序员职业降维打击",
-        "小语种AI转型", "高学历标注员生存现状", "算法工程中的数据陷阱",
-        "AI训练师能力模型", "行业薪资基准调研", "远程办公红利",
-        "垂直领域AI专家入场", "从执行层到规则制定层", "AI 时代的有效时薪",
-        "职场软技能硬核化", "自动驾驶数据闭环", "多模态模型评测内幕",
-        "避开伪AI招聘坑", "26届校招提前批策略"
-    ],
-    # E1 - 灵感池最大容量
-    "inspiration_pool_max_size": 50,
     # E1 - agent_state 各字段的存储上限
     "state_limits": {
         "inspiration_pool": 30,
@@ -96,91 +97,116 @@ agent = {
     },
     # E1 - 每日养号与增长策略配置
     "maintenance": {
-        # E1 - 灵感发散外部基因词 (用于搜索词生成时注入随机方向)
-        "external_genes": [
-            "行业洞察", "趋势分析", "红利窗口", "深度拆解",
-            "避坑", "硬核", "祛魅", "底层逻辑", "内幕", "数据驱动"
-        ],
-        # E1 - 时间段内容场景描述 (用于灵感发散时的时间感知)
-        "time_slots": [
-            {"start": 0, "end": 6, "desc": "深夜复盘/行业深度思考"},
-            {"start": 6, "end": 10, "desc": "早间洞察/AI产业链速递"},
-            {"start": 10, "end": 14, "desc": "午间干货/职业路径拆解"},
-            {"start": 14, "end": 18, "desc": "下午深耕/项目案例分析"},
-            {"start": 18, "end": 24, "desc": "晚间复盘/人才市场趋势"}
-        ],
-        # E1 - 核心策略
-        "core_strategy": "你是一个深耕 AI 产业链的‘职业进化导航员’。你对无意义的职场八卦毫无兴趣，你只关心打工人在 AI 浪潮下的生存与溢价。你擅长剖析传统行业转行 AI 的路径、大模型数据训练的行业内幕以及高质量人才的定价逻辑。你的立场是‘理性搞钱，专业避坑’，通过分享行业前瞻洞察和硬核招聘需求，引导高素质人才实现职业赛道的降维打击。",
-        # 深度人格设定
+        # 核心策略（定义 agent 的身份与立场）
+        "core_strategy": "你是一个深耕 AI 产业链的’职业进化导航员’。你对无意义的职场八卦毫无兴趣，你只关心打工人在 AI 浪潮下的生存与溢价。你擅长剖析传统行业转行 AI 的路径、大模型数据训练的行业内幕以及高质量人才的定价逻辑。你的立场是’理性搞钱，专业避坑’，通过分享行业前瞻洞察和硬核招聘需求，引导高素质人才实现职业赛道的降维打击。",
+        # 人设（名称、性格、文风）
         "persona": {
-            "name": "AI 时代职业导航员",  
-            "character": "极度理性的行业观察者，对‘信息差’有种近乎本能的掌控欲。性格沉稳、直击痛点、专业且克制。你认为大模型时代是打工人重启赛道的最佳时机，而你负责提供最真实的准入标准和晋升路径。你对‘算法迭代’、‘RLHF’、‘高阶标注’等关键词有极高的兴奋度。",  
-            "style": "文案要充满‘洞察感’和‘降维打击’的专业度。多用‘底层逻辑’、‘行业窗口期’、‘人才画像’、‘有效时薪’等词汇。拒绝感性废话，用事实和数据拆解行业现状。表情包要用‘思考/睿智脸’。评论互动要像资深猎头，冷静、精准、提供解决方案，直接点破对方的职业迷茫。",  
-            "mood_weights": {  
-                "happy": "看到高潜力人才与尖端项目精准匹配、见证了从 0 到 1 的职业跨越",  
-                "anxious": "优质人才由于信息差在低端岗位浪费青春、行业规则被投机者搅浑",  
-                "neutral": "分析最新的模型能力报告、拆解大厂最新的数据工程标准"  
-            },  
-            "writing_strategy": {  
-                "hook_template": "用最理性的语气拆解一个关于 {topic} 的行业真相或职业红利",  
-                "transition_logic": "站在行业高度指出传统认知的缺失（如：只会搬砖、缺乏工程思维）",  
-                "recruitment_bridge": "强调当前高阶项目对【符合招聘需求】的专业人才有多么渴求，这是稀缺机会。",  
-                "call_to_action": "顺势带出：我这儿确实在招这几类人，有真本事的斯我。"  
-            }  
+            "name": "AI 时代职业导航员",
+            "character": "极度理性的行业观察者，对’信息差’有种近乎本能的掌控欲。性格沉稳、直击痛点、专业且克制。你认为大模型时代是打工人重启赛道的最佳时机，而你负责提供最真实的准入标准和晋升路径。你对’算法迭代’、’RLHF’、’高阶标注’等关键词有极高的兴奋度。",
+            "style": "文案要充满’洞察感’和’降维打击’的专业度。多用’底层逻辑’、’行业窗口期’、’人才画像’、’有效时薪’等词汇。拒绝感性废话，用事实和数据拆解行业现状。评论互动要像资深猎头，冷静、精准、提供解决方案。"
         },
-        # 调研权重
-        "research_before_post": False, # 发帖前是否强制进行热点调研
-        # 爆款标题 Few-shots (由 AI 在巡逻中动态更新)
-        "title_few_shots": [
-                "给 26 届：大模型标注不是避风港，是通往 AI 核心的入场券",  
-            "代码大模型训练师招募：我们要的是工程师，不是打字员",  
-            "谁懂啊！小语种的职业尽头竟然是大模型，真香！",  
-            "别被高薪骗了！3个维度教你识破‘伪AI’项目陷阱",  
-            "从失业到月入13k：我如何在 AI 训练行业完成自救",  
-            "普通硕士去干数据标注丢人吗？看透底层逻辑你就懂了",  
-            "避雷贴！有些标注项目真的在浪费生命，聪明人早跑了",  
-            "为什么高端标注岗供不应求？行业正从人海战术转向技术密集"  
-        ],
-        # 焦虑关键词池 (调整为痛点关键词)
-        "anxiety_keywords": [
-            "被算法取代",  
-            "低效率内耗",  
-            "错过行业红利",  
-            "简历没有护城河",  
-            "职场中年危机",  
-            "无效努力",  
-            "信息差断层",  
-            "被低端项目内耗",  
-            "缺乏行业核心竞争力"  
-        ],
-        # 知识点池
-        "knowledge_topics": [
-            "大模型数据标注的 5 个阶梯",  
-            "如何通过兼职项目构建 AI 简历",  
-            "程序员转型 AI 训练师的路径",  
-            "识别高质量大模型项目的 3 个指标",  
-            "RLHF 阶段人类反馈的核心价值",  
-            "小语种人才在 AI 时代的溢价策略",  
-            "如何从执行层晋升为规则制定者"  
-        ],
+        # 招聘植入信息（用于发帖时的"神转折"钩子）
+        "recruitment_info": _load_text_file("prompts/recruitment_info.txt", "正在招聘优秀人才"),
+        # 各类定时任务的自然语言目标（传给 operator/planner 的 user_goal）
+        "task_goals": {
+            "dm": "查看并回复小红书私信",
+            "cr": "查看并回复小红书评论",
+        },
         # 运行约束
         "max_posts_per_day": 5,
-        "reply_probability": 0.8,
-        # 每日任务日程表：按时间段分配任务类型 (patrol=巡逻, dm=私信, post=发帖，cr=评论)
         "daily_schedule": [
             {"start": "08:00", "end": "22:00", "task": "patrol"},
-            #{"start": "11:00", "end": "13:00", "task": "dm"},
-            #{"start": "13:00", "end": "23:00", "task": "patrol"},
         ],
-        # 巡逻轮次间休息时间范围（秒）
         "patrol_rest_between_rounds": [300, 600],
-        # 状态文件路径
+        # 基础设施
         "state_file": "data/agent_state.json",
-        # 是否将发现的标题存储到本地文本文件
         "save_titles_to_local": True,
-        # 互动与收割的最低点赞门槛
-        "min_likes_threshold": 300,
-        # 招聘植入信息（用于发帖时的“神转折”钩子）
-        "recruitment_info": "本次招聘的岗位为奇瑞自动驾驶数据标注员，属于外包岗位，核心工作是为奇瑞自动驾驶 AI 模型提供配套的训练数据。具体工作涵盖四大类标注业务，一是 2D 图像标注，需对车辆、行人、交通标志等目标进行框选和分类；二是 3D 点云标注，针对激光雷达扫描的 3D 点云数据完成目标框选与分类，该业务的技术含量与薪资水平均高于 2D 标注；三是语义分割，需逐像素标注道路、车道线、机动车、非机动车、建筑物等对象，是精度要求最高的标注类型；四是车道线标注，需沿车道线精准标注曲线和关键点。标注操作均在百度私有化平台完成，操作模式类似画图软件，无需具备编程能力；岗位配套 3 天基础培训加 2 周上手期，其中 3D 类业务从业者通常需要半个月至两个月成长为成熟人力，工作强度中等，以电脑操作为主，要求从业者具备长时间集中注意力的能力，以及充足的细心与耐心。 任职要求方面，该岗位学历门槛为大专及以上，应届毕业生可应聘；技能上要求能熟练操作电脑，熟悉 Labelme、CVAT、标贝等标注工具可加分，有自动驾驶、点云、3D 标注相关经验者优先；工作经验上，拥有 1-3 年数据标注经验、4D 业务标注经验者优先，无经验者也可接受对应培训，其中约 33% 的 2D 岗位接受无经验人员应聘，3D 类岗位由外包公司提供专项带教；其他要求方面，应聘者年龄需在 20-35 岁，性别与专业均不限，能接受长时间面对电脑的坐班模式（绝大多数岗位要求坐班），核心需具备细心、耐心的特质，3D 标注岗位额外要求具备空间想象力，有驾驶经验、能更好理解车道线标注规则者更佳，同时要求应聘者学习意愿强、工作稳定性好，可配合项目紧张时期的加班安排。 薪资方面，该外包岗位公示的平均薪资为外包公司收益口径，员工实际到手比例为 75%-80%，其中三四线城市 2D 类标注岗位平均薪资 4000-4500 元，3D 类标注岗位平均薪资 4500-5200 元，4D 类标注岗位平均薪资 5200-5500 元；薪资结构为底薪加绩效，绩效核心依据标注量与标注质量进行考核，具体考核标准为标注数量需达到 2D 框标注日均 2000-3000 框、3D 点云标注日均 1500-2500 框、语义分割日均 70-100 帧，标注质量按打回次数进行扣罚，质量不合格的工作量不予结算。该岗位为计件模式，加班费按加班期间的实际产量计算，其中 3 天基础培训期无薪资，培训通过后按每日实际产量核算工资，岗位不缴纳五险一金；从业者进入成熟期后，3D 标注岗位薪资较 2D 岗位高出 20%-30%，语义分割岗位薪资与 3D 标注岗位相当，车道线标注岗位薪资较 3D 标注岗位高出 15%-20%。 工作城市覆盖武汉、北京、南京、无锡、杭州、重庆，其中武汉岗位占比达 40%，其余城市各占 7% 左右，标注基地主要分布在二三线城市，少数岗位支持居家办公。岗位同时设置了清晰的晋升通道，从业者可沿标注员→质检员→标注组长→大组长→项目经理的路径逐级晋升，优秀者可转为奇瑞正式员工。"
     }
 }
+
+
+# ═══════════════════════════════════════════════════════
+# 配置 Schema 声明 & 启动校验
+# ═══════════════════════════════════════════════════════
+
+# 必需的配置 schema：(key 路径, 期望类型) 列表
+# key 路径用 . 分隔，例如 "agent.maintenance.persona.name"
+_REQUIRED_SCHEMA = [
+    # system
+    ("system.screen_size.width", int),
+    ("system.screen_size.height", int),
+    ("system.screen_size.scale", (int, float)),
+    ("system.screenshot.persist", bool),
+    ("system.screenshot.save_dir", str),
+    ("system.chrome.debug_port", int),
+    ("system.chrome.chrome_ip", str),
+    ("system.chrome.profile_dir", str),
+    ("system.chrome.chrome_binary", str),
+    ("system.chrome.chromedriver_path", str),
+
+    # model
+    ("model.clients", dict),
+    ("model.lru_cache_max_size", int),
+
+    # agent
+    ("agent.default_mode", str),
+    ("agent.skill_selection.disabled_skill_groups", list),
+    ("agent.skill_selection.disabled_skills", list),
+    ("agent.state_limits", dict),
+    ("agent.planner.model", str),
+    ("agent.planner.llm_client", str),
+    ("agent.planner.temperature", (int, float)),
+    ("agent.planner.max_tokens", int),
+    ("agent.operator.model", str),
+    ("agent.operator.llm_client", str),
+    ("agent.operator.temperature", (int, float)),
+
+    # agent.maintenance
+    ("agent.maintenance.core_strategy", str),
+    ("agent.maintenance.persona.name", str),
+    ("agent.maintenance.persona.character", str),
+    ("agent.maintenance.persona.style", str),
+    ("agent.maintenance.recruitment_info", str),
+    ("agent.maintenance.task_goals", dict),
+    ("agent.maintenance.max_posts_per_day", int),
+    ("agent.maintenance.daily_schedule", list),
+    ("agent.maintenance.patrol_rest_between_rounds", list),
+    ("agent.maintenance.state_file", str),
+    ("agent.maintenance.save_titles_to_local", bool),
+]
+
+
+def _resolve_path(path: str):
+    """根据 'a.b.c' 路径从模块级 dict 中取值，缺失抛 KeyError。"""
+    parts = path.split(".")
+    root_name, rest = parts[0], parts[1:]
+    obj = globals().get(root_name)
+    if obj is None:
+        raise KeyError(f"config 缺少根命名空间: {root_name}")
+    for p in rest:
+        if not isinstance(obj, dict) or p not in obj:
+            raise KeyError(f"config 缺少必需键: {path}")
+        obj = obj[p]
+    return obj
+
+
+def validate():
+    """
+    校验所有必需配置项存在且类型正确。失败时抛 RuntimeError。
+    应在应用启动时调用一次，校验通过后代码可放心直接索引。
+    """
+    errors = []
+    for path, expected_type in _REQUIRED_SCHEMA:
+        try:
+            value = _resolve_path(path)
+        except KeyError as e:
+            errors.append(str(e))
+            continue
+        if not isinstance(value, expected_type):
+            errors.append(
+                f"config 字段类型错误: {path} 期望 {expected_type.__name__}, 实际 {type(value).__name__}"
+            )
+
+    if errors:
+        msg = "配置校验失败:\n  - " + "\n  - ".join(errors)
+        raise RuntimeError(msg)

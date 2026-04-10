@@ -3,8 +3,9 @@ import uuid
 import asyncio
 import websockets
 import httpx
-from agents.operator import run_task
-from agents.supervisor import supervisor, AgentMode
+from agents.base import Task
+from agents.supervisor import AgentMode
+from runtime.container import get_container
 from dto.agent import AgentRequest
 import config
 import utils.logger as logger
@@ -12,116 +13,100 @@ from fastapi.responses import RedirectResponse
 
 router = APIRouter()
 
+
+def _supervisor():
+    return get_container().supervisor
+
+
 async def handle_agent_actions(trace_id: str, request: AgentRequest):
-    """
-    异步执行 ReAct Agent 任务
-    """
+    """异步执行 Agent 任务"""
     try:
         logger.info({
             "msg": "开始执行 Agent 任务",
             "user_goal": request.user_goal,
-            "max_steps": request.max_steps
         }, trace_id)
-        
-        # 使用 supervisor 执行任务
-        result = await supervisor.execute_task(
-            user_goal=request.user_goal,
-            trace_id=trace_id
-        )
-        
-        logger.info({
-            "msg": "Agent 任务完成",
-            "result": result
-        }, trace_id)
-        
+
+        task = Task(kind="user_goal", goal=request.user_goal)
+        result = await _supervisor().execute_task(task, trace_id=trace_id)
+
+        logger.info({"msg": "Agent 任务完成", "ok": result.ok}, trace_id)
     except Exception as e:
-        logger.error({
-            "msg": "Agent 任务执行失败",
-            "error": str(e)
-        }, trace_id)
+        logger.error({"msg": "Agent 任务执行失败", "error": str(e)}, trace_id)
 
 
 @router.post("/agent/actions")
 async def router_agent_actions(request: AgentRequest = Body(...)):
-    """
-    启动 ReAct Agent 执行任务
-    """
+    """启动 Agent 执行任务（异步）"""
     trace_id = str(uuid.uuid4())
     asyncio.create_task(handle_agent_actions(trace_id, request))
     return {
         "trace_id": trace_id,
         "message": "任务已启动，正在后台执行",
+        "result": None,
         "error": None,
-        "finish": False
     }
 
 
 @router.post("/agent/actions/sync")
 async def router_agent_actions_sync(request: AgentRequest = Body(...)):
-    """
-    同步执行 ReAct Agent 任务（等待完成后返回结果）
-    """
+    """同步执行 Agent 任务"""
     trace_id = str(uuid.uuid4())
-    
     try:
-        result = await supervisor.execute_task(
-            user_goal=request.user_goal,
-            trace_id=trace_id
-        )
-        
+        task = Task(kind="user_goal", goal=request.user_goal)
+        result = await _supervisor().execute_task(task, trace_id=trace_id)
         return {
             "trace_id": trace_id,
-            "message": "任务完成",
-            "result": result
+            "message": "任务完成" if result.ok else "任务失败",
+            "result": {
+                "ok": result.ok,
+                "summary": result.summary,
+                "error": str(result.error) if result.error else None,
+            },
+            "error": None,
         }
-        
     except Exception as e:
-        logger.error({
-            "msg": "Agent 任务执行失败",
-            "error": str(e)
-        }, trace_id)
+        logger.error({"msg": "Agent 任务执行失败", "error": str(e)}, trace_id)
         return {
             "trace_id": trace_id,
             "message": "任务失败",
+            "result": None,
             "error": str(e),
-            "result": None
         }
+
 
 @router.get("/agent/status")
 async def get_agent_status():
-    """获取当前 Agent 节点状态"""
-    return supervisor.get_status()
+    return _supervisor().get_status()
+
 
 @router.post("/agent/patrol")
 async def toggle_patrol(enable: bool = Body(..., embed=True)):
-    """开启或关闭自动调度"""
+    sv = _supervisor()
     if enable:
-        supervisor.set_mode(AgentMode.PATROLLING)
-        if not supervisor.scheduler_task or supervisor.scheduler_task.done():
-            supervisor.scheduler_task = asyncio.create_task(supervisor.run_schedule_loop())
+        sv.set_mode(AgentMode.PATROLLING)
+        sv.start_scheduler()
         return {"message": "自动调度已开启"}
-    else:
-        supervisor.set_mode(AgentMode.WAITING)
-        return {"message": "自动调度已关闭"}
+    sv.set_mode(AgentMode.WAITING)
+    return {"message": "自动调度已关闭"}
+
 
 @router.post("/agent/mode/debug")
 async def set_debug_mode():
-    """切换到调试模式"""
-    supervisor.set_mode(AgentMode.DEBUG)
+    _supervisor().set_mode(AgentMode.DEBUG)
     return {"message": "已进入调试模式，所有任务已停止"}
 
+
 @router.post("/agent/mode/waiting")
-async def set_debug_mode():
-    """切换到调试模式"""
-    supervisor.set_mode(AgentMode.WAITING)
+async def set_waiting_mode():
+    _supervisor().set_mode(AgentMode.WAITING)
     return {"message": "已进入WAITING模式"}
+
 
 @router.post("/agent/maintenance/trigger")
 async def trigger_maintenance():
-    """强制触发一次养号任务"""
     trace_id = f"maint-manual-{uuid.uuid4().hex[:8]}"
-    goal = "执行每日养号发帖任务：制造职场焦虑并传播知识"
-    asyncio.create_task(supervisor.execute_task(user_goal=goal, trace_id=trace_id))
+    task = Task(kind="maintenance", goal="执行每日养号发帖任务：制造职场焦虑并传播知识")
+    asyncio.create_task(_supervisor().execute_task(task, trace_id=trace_id))
     return {"message": "已强制触发养号任务", "trace_id": trace_id}
 
 @router.get("/agent/chrome/{path:path}")

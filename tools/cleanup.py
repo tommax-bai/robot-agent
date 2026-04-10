@@ -19,8 +19,8 @@ def cleanup_chrome_environment(trace_id: str = "system"):
         for tab in tabs:
             try:
                 chrome_client.close_tab(tab["id"])
-            except:
-                pass
+            except Exception as e:
+                logger.warning({"msg": "关闭标签页失败", "tab_id": tab.get("id"), "error": str(e)}, trace_id)
         
         time.sleep(1) # 等待浏览器反应
         logger.info({"msg": "浏览器环境清理完成"}, trace_id)

@@ -1,49 +1,91 @@
-import json
-from typing import List, Dict
-import utils.llm_client as llm_client
-from agents.skill.loader import extract_json
-from prompts.planner_prompt import PLANNER_PROMPT
+"""
+Planner Agent：任务分解。
+
+设计原则：
+- 依赖（LlmTool, SkillRegistry）通过构造注入
+- 返回 Plan dataclass，不再 list[dict]
+- 失败抛 PlannerError，不返回单任务兜底
+- skill 过滤在 planner 内部完成，不在 operator
+"""
+from __future__ import annotations
+
+from datetime import datetime
+from typing import TYPE_CHECKING
+
 import config
+import utils.logger as logger
+from agents.base import Plan, PlannerError, SubTask
+from utils.prompt_template import load_prompt_template
+
+if TYPE_CHECKING:
+    from runtime.context import RunContext
+    from services.skill_registry import SkillRegistry
+
 
 class Planner:
-    def __init__(self, model: str = None, llm_client_name: str = None):
-        # 优先从 config 读取配置
-        model_config = config.agent.get("planner_model", {})
-        
-        self.model = model or model_config.get("model", "google/gemini-3-flash-preview")
-        self.llm_client_name = llm_client_name or model_config.get("llm_client", "zenmux")
-        self.temperature = model_config.get("temperature", 0.2)
-        self.max_tokens = model_config.get("max_tokens", 2048)
-        self.prompt_template = PLANNER_PROMPT
+    name = "planner"
 
-    def generate_plan(self, user_goal: str, skills: Dict[str, dict], trace_id: str = "system") -> List[dict]:
-        """调用 LLM 生成任务规划"""
-        # 构建技能简介清单
-        manifest = ""
-        for name, meta in skills.items():
-            manifest += f"- {name}: {meta.get('description', '')}\n"
+    def __init__(self, skills: "SkillRegistry"):
+        self._skills = skills
+        cfg = config.agent["planner"]
+        self._model = cfg["model"]
+        self._client = cfg["llm_client"]
+        self._temperature = cfg["temperature"]
+        self._max_tokens = cfg["max_tokens"]
 
-        from datetime import datetime
+    def generate_plan(self, ctx: "RunContext", user_goal: str) -> Plan:
+        """调用 LLM 生成任务规划。失败抛 PlannerError。"""
+        manifests = self._available_manifests()
+        manifest_text = "".join(
+            f"- {m.name}: {m.description}\n" for m in manifests
+        )
         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-        prompt = self.prompt_template.format(
-            SKILL_MANIFEST=manifest,
+        _, body = load_prompt_template("prompts/operator/plan.md")
+        prompt = body.format(
+            SKILL_MANIFEST=manifest_text,
             USER_GOAL=user_goal,
-            CURRENT_TIME=current_time
+            CURRENT_TIME=current_time,
         )
 
         try:
-            # 引入 _call_llm 统一调用逻辑以记录 Token
-            from agents.operator import _call_llm
-            plan_data, raw_content = _call_llm(
+            data, _raw = ctx.llm.call_json(
                 messages=[{"role": "user", "content": prompt}],
-                model=self.model,
-                client_name=self.llm_client_name,
-                temperature=self.temperature,
-                max_tokens=self.max_tokens,
-                trace_id=trace_id
+                model=self._model,
+                client_name=self._client,
+                temperature=self._temperature,
+                max_tokens=self._max_tokens,
+                trace_id=ctx.trace_id,
             )
-            return plan_data.get("tasks", [])
         except Exception as e:
-            # 兜底：返回一个单任务计划
-            return [{"sub_goal": user_goal, "required_skill": None}]
+            logger.error({"msg": "planner LLM 调用失败", "error": str(e)}, ctx.trace_id)
+            raise PlannerError(f"plan generation failed: {e}") from e
+
+        raw_tasks = data.get("tasks") if isinstance(data, dict) else None
+        if not isinstance(raw_tasks, list) or not raw_tasks:
+            raise PlannerError(f"planner 返回了无效的 tasks 字段: {data}")
+
+        available_names = {m.name for m in manifests}
+        subtasks: list[SubTask] = []
+        for i, t in enumerate(raw_tasks):
+            sub_goal = t.get("sub_goal") if isinstance(t, dict) else None
+            if not sub_goal:
+                raise PlannerError(f"子任务 {i} 缺少 sub_goal")
+            skill = t.get("required_skill") if isinstance(t, dict) else None
+            # planner 输出了不可用的 skill，直接降级为 None（不报错，让 operator 视觉走）
+            if skill and skill not in available_names:
+                logger.warning({
+                    "msg": "planner 返回了不可用的 skill，已降级",
+                    "skill": skill,
+                }, ctx.trace_id)
+                skill = None
+            subtasks.append(SubTask(id=f"sub-{i}", goal=sub_goal, required_skill=skill))
+
+        return Plan(subtasks=subtasks)
+
+    def _available_manifests(self):
+        policy = config.agent["skill_selection"]
+        return self._skills.manifests_for(
+            disabled_skills=set(policy["disabled_skills"]),
+            disabled_groups=set(policy["disabled_skill_groups"]),
+        )

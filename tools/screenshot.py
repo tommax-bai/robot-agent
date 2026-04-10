@@ -73,9 +73,8 @@ def get_screenshot_base64(trace_id: str, include_cursor: bool = False, shot_wind
        mouse_x_scaled, mouse_y_scaled = _draw_mouse_cursor(screen_img, window)
     
     # 如果配置了持久化保存，将截图保存到本地
-    persist = config.system.get("screenshot", {}).get("persist", False)
-    if persist:
-        save_dir = config.system.get("screenshot", {}).get("save_dir", "data")
+    if config.system["screenshot"]["persist"]:
+        save_dir = config.system["screenshot"]["save_dir"]
         full_path = os.path.join(save_dir, trace_id)
         os.makedirs(full_path, exist_ok=True)
         screen_img.save(os.path.join(full_path, f"screenshot_{time.time()}.jpeg"))
@@ -85,14 +84,16 @@ def get_screenshot_base64(trace_id: str, include_cursor: bool = False, shot_wind
     screen_img.save(buffered, format="JPEG", quality=75)
     img_base64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
     
-    from runtime import context
-    context.core["window"]["x"] = window.left
-    context.core["window"]["y"] = window.top
-    context.core["window"]["w"] = window.right - window.left
-    context.core["window"]["h"] = window.bottom - window.top
+    from tools import screen as screen_tool
+    screen_tool.update_window(
+        x=window.left,
+        y=window.top,
+        w=window.right - window.left,
+        h=window.bottom - window.top,
+    )
 
     logger.info({
-        "msg": f"截图成功, 鼠标位置: {mouse_x_scaled}, {mouse_y_scaled}, 窗口信息 {context.core["window"]}",
+        "msg": f"截图成功, 鼠标位置: {mouse_x_scaled}, {mouse_y_scaled}, 窗口信息 {screen_tool.get_window()}",
         "trace_id": trace_id,
     })
 
@@ -101,7 +102,7 @@ def get_screenshot_base64(trace_id: str, include_cursor: bool = False, shot_wind
 
 def _draw_mouse_cursor(screen_img: Image, window) -> tuple[int, int] :
     # 获取缩放比例（Retina 屏幕为 2.0，普通屏幕为 1.0）
-    scale = config.system.get("screen_size", {}).get("scale", 1.0)
+    scale = config.system["screen_size"]["scale"]
     
     # 获取鼠标逻辑坐标并转换为物理像素坐标
     draw = ImageDraw.Draw(screen_img)
