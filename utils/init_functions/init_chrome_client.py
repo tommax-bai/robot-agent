@@ -165,20 +165,49 @@ class ChromeClient:
             logger.error(f"关闭标签页失败: {e}")  
             return False  
   
-    def get_current_tab(self) -> Optional[Dict[str, Any]]:  
-        """获取当前活动标签页信息"""  
-        with self._lock:  
-            if not self._driver:  
-                return None  
-            try:  
-                current_url = self._driver.current_url  
-                tabs = self.list_tabs()  
-                for tab in tabs:  
-                    if tab["url"] == current_url:  
-                        return tab  
-                return None  
-            except Exception:  
-                return None  
+    def get_current_tab(self) -> Optional[Dict[str, Any]]:
+        """获取当前活动标签页信息"""
+        with self._lock:
+            if not self._driver:
+                return None
+            try:
+                current_url = self._driver.current_url
+                tabs = self.list_tabs()
+                for tab in tabs:
+                    if tab["url"] == current_url:
+                        return tab
+                return None
+            except Exception:
+                return None
+
+    def get_window_bounds(self) -> Optional[Dict[str, int]]:
+        """
+        通过 CDP 获取本项目连接的 Chrome 窗口 bounds（left/top/width/height，单位 DIP）。
+
+        这是"本项目启动的 Chrome"的权威来源：debugger 只会附加到我们自己启动
+        的 Chrome 实例，所以 Browser.getWindowForTarget 返回的窗口就是项目窗口。
+        多开 Chrome 场景下由截图工具用它来筛出正确的 pywinctl 窗口。
+
+        Returns:
+            {"left": int, "top": int, "width": int, "height": int} 或 None
+        """
+        with self._lock:
+            if not self._check_driver_alive():
+                return None
+            try:
+                result = self._driver.execute_cdp_cmd("Browser.getWindowForTarget", {})
+                bounds = (result or {}).get("bounds") or {}
+                if "left" not in bounds or "top" not in bounds:
+                    return None
+                return {
+                    "left": int(bounds.get("left", 0)),
+                    "top": int(bounds.get("top", 0)),
+                    "width": int(bounds.get("width", 0)),
+                    "height": int(bounds.get("height", 0)),
+                }
+            except Exception as e:
+                logger.warning(f"获取 Chrome 窗口 bounds 失败: {e}")
+                return None
   
     # ==================== 原有方法 ====================  
   

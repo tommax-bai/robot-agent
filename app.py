@@ -22,51 +22,88 @@ from api.v1.route import usage as usage_route
 from runtime.container import init_container
 
 
-_sigint_count = 0
-
-
 def _install_sigint_escalator(container) -> None:
-    """注册 SIGINT/SIGTERM 升级处理：
-       - 第一次 Ctrl+C：立即停止 Chrome 监控自动重启 + 取消 supervisor 当前任务 +
-         取消所有 asyncio 任务，让 uvicorn 退出 lifespan 走正常关闭流程。
-       - 第二次 Ctrl+C：os._exit(130) 强制退出，绕过任何卡死在同步代码
-         （pyautogui / requests.post LLM / Selenium 等）的协程。
+    """注册 SIGINT/SIGTERM 升级处理（连按两次 Ctrl+C 必定退出）：
+
+    - 第一次 Ctrl+C：
+        1) 立即将 SIGINT/SIGTERM 恢复为系统默认处理（SIG_DFL）——这样
+           第二次信号无需再经 Python 解释器，由内核直接终止进程，即便
+           主线程此刻卡在 pyautogui / selenium / requests 等释放 GIL
+           的同步 C 调用里，也一定能退出。
+        2) 停止 Chrome 监控线程的自动重启逻辑，避免调用方杀掉 Chrome
+           子进程后被监控线程复活。
+        3) 通过 supervisor.request_cancel 触发 cancel token。
+        4) 用 loop.call_soon_threadsafe 调度一次 asyncio 任务取消，
+           让 uvicorn 走正常 lifespan shutdown。
+
+    - 第二次 Ctrl+C：SIG_DFL 直接结束进程（kill -INT），其同进程组的
+      Chrome 子进程也一并收到 SIGINT。
+
+    用 signal.signal 而非 loop.add_signal_handler，是因为后者依赖事件
+    循环 tick——主线程阻塞时两次信号都不会执行 Python 处理器。而
+    signal.signal 的 C 级处理器可以把 SIG_DFL 装回去，后续信号才真正
+    有办法打断卡死的进程。
     """
     loop = asyncio.get_running_loop()
+    state = {"fired": False}
 
-    def _handler(signame: str) -> None:
-        global _sigint_count
-        _sigint_count += 1
-        if _sigint_count == 1:
+    def _handler(signum, _frame):
+        if state["fired"]:
+            # 理论上不会走到：SIG_DFL 已经接管了后续信号。
+            os._exit(130)
+        state["fired"] = True
+
+        # 1. 立刻把默认处理器装回去，第二次 Ctrl+C 由内核兜底强杀。
+        try:
+            signal.signal(signal.SIGINT, signal.SIG_DFL)
+            signal.signal(signal.SIGTERM, signal.SIG_DFL)
+        except Exception:
+            pass
+
+        try:
             logger.warning({
-                "msg": f"收到 {signame}，正在停止任务…再按一次 Ctrl+C 强制退出",
+                "msg": f"收到信号 {signum}，正在停止任务… 再按一次 Ctrl+C 立即强制退出",
             })
-            # 1. 立即停止 Chrome 监控线程的自动重启逻辑
+        except Exception:
+            pass
+
+        # 2. 停止 Chrome 监控自动重启（同步调用，仅翻一个 flag）
+        try:
+            from utils.init_functions.init_chrome_client import disable_chrome_auto_restart
+            disable_chrome_auto_restart()
+        except Exception as e:
             try:
-                from utils.init_functions.init_chrome_client import disable_chrome_auto_restart
-                disable_chrome_auto_restart()
-            except Exception as e:
                 logger.error({"msg": "停用 Chrome 自动重启失败", "error": str(e)})
-            # 2. 让 supervisor 的 cancel token 立刻翻牌
+            except Exception:
+                pass
+
+        # 3. 请求 supervisor 取消（非阻塞）
+        try:
+            container.supervisor.request_cancel("sigint")
+        except Exception as e:
             try:
-                container.supervisor.request_cancel("sigint")
-            except Exception as e:
                 logger.error({"msg": "请求 supervisor 取消失败", "error": str(e)})
-            # 3. 取消所有 asyncio 任务，触发 uvicorn 进入 shutdown
+            except Exception:
+                pass
+
+        # 4. 线程安全地调度 asyncio 任务取消，让 uvicorn 进 shutdown
+        def _cancel_all_tasks() -> None:
             current = asyncio.current_task()
             for t in asyncio.all_tasks(loop):
                 if t is not current:
                     t.cancel()
-        else:
-            logger.error({"msg": f"再次收到 {signame}，强制退出进程"})
-            os._exit(130)
 
-    for sig, name in ((signal.SIGINT, "SIGINT"), (signal.SIGTERM, "SIGTERM")):
         try:
-            loop.add_signal_handler(sig, _handler, name)
-        except (NotImplementedError, RuntimeError):
-            # Windows 上 add_signal_handler 不支持，回退到 signal.signal
-            signal.signal(sig, lambda *_args, _n=name: _handler(_n))
+            loop.call_soon_threadsafe(_cancel_all_tasks)
+        except Exception:
+            pass
+
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            signal.signal(sig, _handler)
+        except (ValueError, OSError):
+            # 非主线程或平台不支持时静默跳过
+            pass
 
 
 @asynccontextmanager

@@ -12,7 +12,7 @@ from typing import Any, Literal, Protocol
 # 任务输入/输出
 # ═══════════════════════════════════════════════════════
 
-TaskKind = Literal["patrol", "post", "dm", "cr", "user_goal", "maintenance"]
+TaskKind = Literal["patrol", "post", "dm", "cr", "user_goal"]
 
 
 @dataclass(frozen=True)
@@ -188,6 +188,8 @@ class Decision:
         """支持四种 LLM 输出形态"""
         if isinstance(obj, list):
             thought = obj[0].get("thought", "") if obj and isinstance(obj[0], dict) else ""
+            if obj and isinstance(obj[0], dict) and isinstance(obj[0].get("actions"), list):
+                return [a for a in obj[0]["actions"] if isinstance(a, dict)], thought
             return [a for a in obj if isinstance(a, dict)], thought
         if not isinstance(obj, dict):
             return [], ""

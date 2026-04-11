@@ -64,13 +64,6 @@ model = {
 agent = {
     "default_mode": "patrolling",
     #"default_mode": "waiting",
-    # E1 - 技能选择策略
-    "skill_selection": {
-        # 显式禁用的一级技能分组（对应 skills/ 下第一级目录），例如: rednote_app、rednote、douyin_web
-        "disabled_skill_groups": ["douyin_web", "rednote_app"],
-        # 显式禁用的技能名列表；被禁用的技能不会暴露给 Planner，执行阶段也会兜底跳过
-        "disabled_skills": [],
-    },
     # E1 - agent_state 各字段的存储上限
     "state_limits": {
         "inspiration_pool": 30,
@@ -150,8 +143,6 @@ _REQUIRED_SCHEMA = [
 
     # agent
     ("agent.default_mode", str),
-    ("agent.skill_selection.disabled_skill_groups", list),
-    ("agent.skill_selection.disabled_skills", list),
     ("agent.state_limits", dict),
     ("agent.planner.model", str),
     ("agent.planner.llm_client", str),

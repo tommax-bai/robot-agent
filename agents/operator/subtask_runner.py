@@ -19,11 +19,11 @@ if TYPE_CHECKING:
 class SubtaskRunner:
     name = "subtask_runner"
 
-    def __init__(self, vision_step: "VisionActionStep", max_resumes: int = 2):
+    def __init__(self, vision_step: VisionActionStep, max_resumes: int = 2):
         self._step = vision_step
         self._max_resumes = max_resumes
 
-    async def run(self, subtask: SubTask, ctx: "RunContext") -> TaskResult:
+    async def run(self, subtask: SubTask, ctx: RunContext) -> TaskResult:
         last_error: Exception | None = None
         for attempt in range(self._max_resumes + 1):
             try:

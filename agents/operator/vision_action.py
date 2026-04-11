@@ -45,9 +45,9 @@ class VisionActionStep:
 
     def __init__(
         self,
-        skills: "SkillRegistry",
-        dispatcher: "ActionDispatcher",
-        screenshot_fn=None,
+        skills: SkillRegistry,
+        dispatcher: ActionDispatcher,
+        screenshot_fn = None,
     ):
         self._skills = skills
         self._dispatcher = dispatcher
@@ -62,7 +62,7 @@ class VisionActionStep:
         self._temperature = cfg["temperature"]
         self._max_steps = cfg.get("max_steps", 40)
 
-    async def run(self, subtask: SubTask, ctx: "RunContext") -> TaskResult:
+    async def run(self, subtask: SubTask, ctx: RunContext) -> TaskResult:
         """
         执行单个子任务的视觉-动作循环。
         成功返回 TaskResult.success(summary)，
@@ -127,17 +127,19 @@ class VisionActionStep:
         user_text = (
             f"【当前步数: {step}/{self._max_steps}】\n"
             f"上一步执行结果: {last_summary}\n"
-            f"请根据当前截图输出下一步动作 JSON。"
+            f"请根据当前image输出下一步动作 JSON。"
         )
+        image_url = f"data:image/jpeg;base64,{observation.image_base64}"
         user_content = [
             {"type": "text", "text": user_text},
-            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{observation.image_base64}"}},
+            {"type": "image_url", "image_url": {"url": image_url}},
         ]
-        history.add_user(user_content)
+        history.set_user(user_content)
+        logger.info({"msg": "观察到新画面，正在决策下一步动作", "step": step, "text": user_text}, ctx.trace_id)
 
         try:
             parsed, raw = ctx.llm.call_json(
-                messages=history.to_messages(),
+                messages= history.to_messages(),
                 model=self._model,
                 client_name=self._client,
                 temperature=self._temperature,
@@ -148,7 +150,7 @@ class VisionActionStep:
             raise
 
         history.add_assistant(raw)
-        logger.info({"msg": f"Step {step} LLM Raw", "raw": raw}, ctx.trace_id)
+        #logger.info({"msg": history.to_messages(), "raw": raw}, ctx.trace_id)
 
         try:
             decision = Decision.parse(parsed, raw)

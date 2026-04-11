@@ -21,16 +21,14 @@ if TYPE_CHECKING:
     from agents.operator.subtask_runner import SubtaskRunner
     from agents.planner.planner import Planner
     from runtime.context import RunContext
-
-
 class Operator:
     name = "operator"
 
-    def __init__(self, planner: "Planner", runner: "SubtaskRunner"):
+    def __init__(self, planner: Planner, runner: SubtaskRunner):
         self._planner = planner
         self._runner = runner
 
-    async def run(self, task: Task, ctx: "RunContext") -> TaskResult:
+    async def run(self, task: Task, ctx: RunContext) -> TaskResult:
         init_history(ctx.trace_id, task.goal)
 
         logger.info({"msg": "开始任务规划", "goal": task.goal}, ctx.trace_id)

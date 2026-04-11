@@ -35,15 +35,15 @@ class Planner:
 
     def generate_plan(self, ctx: "RunContext", user_goal: str) -> Plan:
         """调用 LLM 生成任务规划。失败抛 PlannerError。"""
-        manifests = self._available_manifests()
-        manifest_text = "".join(
-            f"- {m.name}: {m.description}\n" for m in manifests
+        skill_list = self._skills.get_all()
+        skills_manifest = "".join(
+            f"- {m.name}: {m.description}\n" for m in skill_list
         )
         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
         _, body = load_prompt_template("prompts/operator/plan.md")
         prompt = body.format(
-            SKILL_MANIFEST=manifest_text,
+            SKILL_MANIFEST=skills_manifest,
             USER_GOAL=user_goal,
             CURRENT_TIME=current_time,
         )
@@ -65,7 +65,6 @@ class Planner:
         if not isinstance(raw_tasks, list) or not raw_tasks:
             raise PlannerError(f"planner 返回了无效的 tasks 字段: {data}")
 
-        available_names = {m.name for m in manifests}
         subtasks: list[SubTask] = []
         for i, t in enumerate(raw_tasks):
             sub_goal = t.get("sub_goal") if isinstance(t, dict) else None
@@ -73,7 +72,7 @@ class Planner:
                 raise PlannerError(f"子任务 {i} 缺少 sub_goal")
             skill = t.get("required_skill") if isinstance(t, dict) else None
             # planner 输出了不可用的 skill，直接降级为 None（不报错，让 operator 视觉走）
-            if skill and skill not in available_names:
+            if skill and self._skills.get(skill) is None:
                 logger.warning({
                     "msg": "planner 返回了不可用的 skill，已降级",
                     "skill": skill,
@@ -82,10 +81,3 @@ class Planner:
             subtasks.append(SubTask(id=f"sub-{i}", goal=sub_goal, required_skill=skill))
 
         return Plan(subtasks=subtasks)
-
-    def _available_manifests(self):
-        policy = config.agent["skill_selection"]
-        return self._skills.manifests_for(
-            disabled_skills=set(policy["disabled_skills"]),
-            disabled_groups=set(policy["disabled_skill_groups"]),
-        )

@@ -44,15 +44,54 @@ def get_screenshot_base64(trace_id: str, include_cursor: bool = False, shot_wind
     mouse_x_scaled = 0
     mouse_y_scaled = 0
 
-    for title in shot_window.split("|"): 
-        windows = pywinctl.getWindowsWithTitle(title, pywinctl.Re.CONTAINS)
-        if windows: 
-            break
+    # 收集所有按 title 顺序匹配的候选窗口（多开 Chrome 时会有多个）
+    candidates: list = []
+    for title in shot_window.split("|"):
+        candidates.extend(pywinctl.getWindowsWithTitle(title, pywinctl.Re.CONTAINS))
 
-    if not windows:
+    if not candidates:
         return "", 0, 0
-    
-    window = windows[0]
+
+    window = None
+
+    # 关键修复：多开 Chrome 时，单靠标题匹配会选错窗口。
+    # 通过 CDP 拿到本项目 Selenium driver 实际连接的那个 Chrome 窗口的
+    # bounds（left/top 在 DIP 单位下与 pywinctl 一致），据此从候选里筛出
+    # 本项目自己的窗口。
+    target_bounds = None
+    try:
+        from utils.init_functions.init_chrome_client import get_chrome
+        target_bounds = get_chrome().get_window_bounds()
+    except Exception:
+        target_bounds = None
+
+    if target_bounds:
+        tx = target_bounds["left"]
+        ty = target_bounds["top"]
+        best = None
+        best_dist = None
+        for w in candidates:
+            try:
+                d = abs(w.left - tx) + abs(w.top - ty)
+            except Exception:
+                continue
+            if best is None or d < best_dist:
+                best = w
+                best_dist = d
+        # 允许少量边框/阴影误差
+        if best is not None and best_dist is not None and best_dist <= 20:
+            window = best
+        else:
+            logger.warning({
+                "msg": "未能通过 CDP bounds 定位本项目 Chrome 窗口，回退到标题首匹配",
+                "target_bounds": target_bounds,
+                "candidates": [(w.title, w.left, w.top) for w in candidates],
+                "trace_id": trace_id,
+            })
+
+    if window is None:
+        window = candidates[0]
+
     window.activate()
 
     # 截取屏幕

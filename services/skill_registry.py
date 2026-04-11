@@ -133,22 +133,11 @@ class SkillRegistry:
         )
 
     # ── 查询接口 ──────────────────────────────────────────────
-
-    def manifests_for(
-        self,
-        disabled_skills: set[str] = frozenset(),
-        disabled_groups: set[str] = frozenset(),
-    ) -> list[SkillManifest]:
-        """返回过滤后的 manifest 列表（用于 planner 拼 skill manifest）"""
-        return [
-            s.manifest
-            for s in self._skills.values()
-            if s.manifest.name not in disabled_skills
-            and s.manifest.group not in disabled_groups
-        ]
-
     def get(self, name: str) -> Skill | None:
         return self._skills.get(name)
+
+    def get_all(self) -> list[SkillManifest]:
+        return [s.manifest for s in self._skills.values()]
 
     def build_prompt(self, skill_names: list[str]) -> str:
         """组装挂载技能的 prompt 段落"""

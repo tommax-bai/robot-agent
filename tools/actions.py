@@ -33,7 +33,7 @@ def _human_move(x, y):
     mid_x = (cx + x) / 2 + random.uniform(-dist * 0.05, dist * 0.05)
     mid_y = (cy + y) / 2 + random.uniform(-dist * 0.05, dist * 0.05)
 
-    steps = max(int(dist / 15), 8)
+    steps = max(int(dist / 45), 8)
     for i in range(1, steps + 1):
         t = i / steps
         # 缓入缓出：ease-in-out
@@ -205,7 +205,7 @@ def _human_scroll(params, finish, trace_id):
     remaining = abs_clicks
     while remaining > 0:
         # 模拟人类小幅度拨动滚轮，步长随机
-        step = min(random.randint(15, 50), remaining)
+        step = min(random.randint(30, 50), remaining)
         pyautogui.scroll(step * direction)
         remaining -= step
 

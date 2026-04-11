@@ -44,8 +44,4 @@ def llm_to_screen(x: float, y: float) -> tuple[int, int]:
     pixel_x = x * (screen_w / 1000) + _window["x"]
     pixel_y = y * (screen_h / 1000) + _window["y"]
 
-    logger.info(f"屏幕尺寸: {screen_w}x{screen_h}")
-    logger.info(f"窗口位置: ({_window['x']}, {_window['y']}, {_window['w']}, {_window['h']})")
-    logger.info(f"坐标转换: ({x}, {y}) -> ({pixel_x}, {pixel_y})")
-
     return int(round(pixel_x)), int(round(pixel_y))

@@ -28,7 +28,7 @@ _STRATEGIST_FAILURE_BACKOFF = 60
 # 调度循环
 # ═══════════════════════════════════════════════════════
 
-async def run_schedule_loop(sv: "Supervisor") -> None:
+async def run_schedule_loop(sv: Supervisor) -> None:
     """统一调度引擎：根据 daily_schedule 配置按时段分派任务"""
     from agents.supervisor.supervisor import AgentMode
 

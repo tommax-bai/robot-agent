@@ -5,7 +5,7 @@
 1. **最小化原则**：只规划完成 User Goal 必要的步骤。能用一个子任务完成的就不要拆成两个。
 2. **依赖前置**：如果目标依赖登录态，第一个子任务应是 `rednote-auth`；如果不依赖（如纯浏览），可省略。
 3. **发帖任务**：当目标是创作并发布笔记时，路径为 `rednote-auth` → `rednote-publish`。素材和灵感已在目标中给出，严禁额外规划调研类技能（如 `rednote-explorer`）。
-4. **巡逻/调研任务**：路径为 `rednote-auth` → `rednote-explorer`（或 `rednote-maintainer`）。
+4. **巡逻/调研任务**：路径为 `rednote-auth` → `rednote-explorer`。
 5. **技能选择**：`required_skill` 必须从下方"可用技能清单"中选择；若无匹配技能（如纯浏览操作），可置为 null，由 operator 用通用视觉能力执行。
 
 ## 可用技能清单:

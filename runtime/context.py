@@ -83,6 +83,9 @@ class ConversationHistory:
         self.user_messages.append({"role": "user", "content": content})
         self.user_messages = self.user_messages[-self.max_rounds:]
 
+    def set_user(self, content: list[dict[str, Any]]) -> None:
+        self.user_messages = [{"role": "user", "content": content}]
+
     def add_assistant(self, raw: str) -> None:
         self.assistant_messages.append({"role": "assistant", "content": raw})
         self.assistant_messages = self.assistant_messages[-self.max_rounds:]
@@ -108,10 +111,10 @@ class RunContext:
     """
     trace_id: str
     cancel: CancelToken
-    state: "AgentStateRepo"
-    llm: "LlmTool"
+    state: AgentStateRepo
+    llm: LlmTool
 
-    def child(self, *, trace_id: str | None = None) -> "RunContext":
+    def child(self, *, trace_id: str | None = None) -> RunContext:
         """
         派生子上下文：复用同一个 state/llm，cancel token 树形传播。
         """
