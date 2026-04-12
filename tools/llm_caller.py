@@ -2,6 +2,8 @@
 共享 LLM 调用模块：统一封装 LLM 请求、重试逻辑和 Token 记录。
 所有 agent（operator、planner、strategist）统一使用此模块。
 """
+from __future__ import annotations
+
 import time
 import utils.logger as logger
 import utils.llm_client as llm_client

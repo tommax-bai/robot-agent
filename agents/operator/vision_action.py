@@ -111,7 +111,7 @@ class VisionActionStep:
 
         return "\n".join([action_section, common_rules_body, skill_section, constraint_section])
 
-    def _observe(self, ctx: "RunContext") -> Observation:
+    def _observe(self, ctx: RunContext) -> Observation:
         image_b64, _, _ = self._screenshot_fn(ctx.trace_id, include_cursor=True)
         return Observation(image_base64=image_b64, captured_at=datetime.now().isoformat())
 
@@ -121,7 +121,7 @@ class VisionActionStep:
         observation: Observation,
         last_outcome,
         step: int,
-        ctx: "RunContext",
+        ctx: RunContext,
     ) -> Decision:
         last_summary = self._format_last_outcome(last_outcome)
         user_text = (

@@ -1,10 +1,10 @@
+from __future__ import annotations
+
 from fastapi import APIRouter, Query
 import os
 import json
 import glob
 from datetime import datetime
-from typing import List, Dict, Any, Optional
-
 router = APIRouter()
 
 LOG_DIR = "logs/token_usage"

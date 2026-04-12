@@ -5,6 +5,8 @@
 - 优先用 macOS 原生 API（Quartz）查 backing scale factor，无副作用
 - fallback 到 pyautogui 截屏方案（会触发系统截屏权限）
 """
+from __future__ import annotations
+
 import config
 import pyautogui
 import utils.logger as logger

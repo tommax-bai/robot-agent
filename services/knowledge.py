@@ -30,7 +30,7 @@ class EvolutionContext:
     total_knowledge: int
 
 
-def harvest_knowledge(summary: str, trace_id: str, state: "AgentStateRepo") -> None:
+def harvest_knowledge(summary: str, trace_id: str, state: AgentStateRepo) -> None:
     """
     从任务总结中收割知识，写回 state repo。
     无返回值——通过副作用更新 state。
@@ -118,7 +118,7 @@ def _save_note_detail(title: str, content: str) -> None:
         logger.error({"msg": "保存笔记详情失败", "error": str(e)})
 
 
-def get_evolution_context(state: "AgentStateRepo", title_few_shots: list[str]) -> EvolutionContext:
+def get_evolution_context(state: AgentStateRepo, title_few_shots: list[str]) -> EvolutionContext:
     """
     计算 Agent 的进化状态与注意力权重。
     基于 agent_state 的丰富程度决定 首页 vs 搜索 的比例。
@@ -137,5 +137,4 @@ def get_evolution_context(state: "AgentStateRepo", title_few_shots: list[str]) -
         is_mature=total_knowledge > 30,
         total_knowledge=total_knowledge,
     )
-
 

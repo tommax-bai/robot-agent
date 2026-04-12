@@ -17,6 +17,31 @@ if TYPE_CHECKING:
     from services.agent_state import AgentStateRepo
     from tools.llm_tool import LlmTool
 
+# ═══════════════════════════════════════════════════════
+# 运行时上下文
+# ═══════════════════════════════════════════════════════
+
+@dataclass
+class RunContext:
+    """
+    显式传递的运行时上下文。包含 trace_id、取消令牌、状态仓储、LLM 工具。
+    子 agent 调用时使用 ctx.child() 派生子上下文。
+    """
+    trace_id: str
+    cancel: CancelToken
+    state: AgentStateRepo
+    llm: LlmTool
+
+    def child(self, *, trace_id: str | None = None) -> RunContext:
+        """
+        派生子上下文：复用同一个 state/llm，cancel token 树形传播。
+        """
+        return RunContext(
+            trace_id=trace_id or self.trace_id,
+            cancel=self.cancel.child(),
+            state=self.state,
+            llm=self.llm,
+        )
 
 # ═══════════════════════════════════════════════════════
 # 取消令牌
@@ -27,7 +52,7 @@ class CancelToken:
     协作式取消：被调用方在合适的检查点调 raise_if_cancelled()。
     支持树形传播：父 token 取消会同步取消所有 child。
     """
-    def __init__(self, parent: "CancelToken | None" = None):
+    def __init__(self, parent: CancelToken | None = None):
         self._cancelled = False
         self._reason: str = ""
         self._children: list[CancelToken] = []
@@ -56,7 +81,7 @@ class CancelToken:
         if self._cancelled:
             raise CancelledError(self._reason or "task cancelled")
 
-    def child(self) -> "CancelToken":
+    def child(self) -> CancelToken:
         """派生子 token，父取消会传播到子"""
         return CancelToken(parent=self)
 
@@ -79,12 +104,12 @@ class ConversationHistory:
     def set_system(self, content: str) -> None:
         self.system_message = {"role": "system", "content": content}
 
+    def set_user(self, content: list[dict[str, Any]]) -> None:
+        self.user_messages = [{"role": "user", "content": content}]
+
     def add_user(self, content: list[dict[str, Any]]) -> None:
         self.user_messages.append({"role": "user", "content": content})
         self.user_messages = self.user_messages[-self.max_rounds:]
-
-    def set_user(self, content: list[dict[str, Any]]) -> None:
-        self.user_messages = [{"role": "user", "content": content}]
 
     def add_assistant(self, raw: str) -> None:
         self.assistant_messages.append({"role": "assistant", "content": raw})
@@ -97,32 +122,3 @@ class ConversationHistory:
         msgs.extend(self.user_messages)
         msgs.extend(self.assistant_messages)
         return msgs
-
-
-# ═══════════════════════════════════════════════════════
-# 运行时上下文
-# ═══════════════════════════════════════════════════════
-
-@dataclass
-class RunContext:
-    """
-    显式传递的运行时上下文。包含 trace_id、取消令牌、状态仓储、LLM 工具。
-    子 agent 调用时使用 ctx.child() 派生子上下文。
-    """
-    trace_id: str
-    cancel: CancelToken
-    state: AgentStateRepo
-    llm: LlmTool
-
-    def child(self, *, trace_id: str | None = None) -> RunContext:
-        """
-        派生子上下文：复用同一个 state/llm，cancel token 树形传播。
-        """
-        return RunContext(
-            trace_id=trace_id or self.trace_id,
-            cancel=self.cancel.child(),
-            state=self.state,
-            llm=self.llm,
-        )
-
-

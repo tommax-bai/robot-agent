@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 class Planner:
     name = "planner"
 
-    def __init__(self, skills: "SkillRegistry"):
+    def __init__(self, skills: SkillRegistry):
         self._skills = skills
         cfg = config.agent["planner"]
         self._model = cfg["model"]
@@ -33,7 +33,7 @@ class Planner:
         self._temperature = cfg["temperature"]
         self._max_tokens = cfg["max_tokens"]
 
-    def generate_plan(self, ctx: "RunContext", user_goal: str) -> Plan:
+    def generate_plan(self, ctx: RunContext, user_goal: str) -> Plan:
         """调用 LLM 生成任务规划。失败抛 PlannerError。"""
         skill_list = self._skills.get_all()
         skills_manifest = "".join(

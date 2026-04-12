@@ -1,6 +1,8 @@
 """
 任务历史记录模块：负责初始化任务的 trace 文件和索引。
 """
+from __future__ import annotations
+
 import os
 import json
 import yaml

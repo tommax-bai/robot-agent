@@ -37,10 +37,10 @@ if TYPE_CHECKING:
 
 
 class ActionDispatcher:
-    def __init__(self, skills: "SkillRegistry"):
+    def __init__(self, skills: SkillRegistry):
         self._skills = skills
 
-    async def dispatch(self, actions: list[Action], ctx: "RunContext") -> ActionOutcome:
+    async def dispatch(self, actions: list[Action], ctx: RunContext) -> ActionOutcome:
         results: list[ActionResult] = []
 
         for idx, action in enumerate(actions):
@@ -66,7 +66,7 @@ class ActionDispatcher:
 
         return ActionOutcome.continuing(results)
 
-    def _dispatch_skill_tool(self, action: Action, ctx: "RunContext") -> ActionResult:
+    def _dispatch_skill_tool(self, action: Action, ctx: RunContext) -> ActionResult:
         logger.info(
             {"msg": "执行动态工具", "method": action.method, "params": action.params},
             ctx.trace_id,
@@ -89,7 +89,7 @@ class ActionDispatcher:
             )
             return ActionResult(method=action.method, ok=False, message=str(e))
 
-    def _dispatch_atomic(self, action: Action, ctx: "RunContext") -> ActionResult:
+    def _dispatch_atomic(self, action: Action, ctx: RunContext) -> ActionResult:
         try:
             raw = atomic_actions.execute_action(
                 ctx.trace_id,

@@ -1,6 +1,8 @@
 """
 等待验证码回调：阻塞式等待，带超时保护防止永久卡死。
 """
+from __future__ import annotations
+
 import time
 
 import utils.logger as logger

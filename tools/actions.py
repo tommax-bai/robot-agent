@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from tools.screen import llm_to_screen
 import pyautogui
 import pyperclip
@@ -33,7 +35,7 @@ def _human_move(x, y):
     mid_x = (cx + x) / 2 + random.uniform(-dist * 0.05, dist * 0.05)
     mid_y = (cy + y) / 2 + random.uniform(-dist * 0.05, dist * 0.05)
 
-    steps = max(int(dist / 45), 8)
+    steps = max(int(dist / 75), 6)
     for i in range(1, steps + 1):
         t = i / steps
         # 缓入缓出：ease-in-out

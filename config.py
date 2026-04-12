@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import os
 
 def _load_text_file(path: str, default: str = "") -> str:

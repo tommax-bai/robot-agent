@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import utils.init_functions.init_screen_size as init_screen_size
 import utils.init_functions.init_system_info as init_system_info
 import utils.init_functions.init_chrome_client as init_chrome_client

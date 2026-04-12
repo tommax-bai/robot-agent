@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from utils.init_functions.init_chrome_client import get_chrome
 import utils.logger as logger
 import time

@@ -6,6 +6,8 @@ window 状态是 screen tool 的内部状态：
 - llm_to_screen 读取做坐标转换
 不再放在 runtime/context.py 中混淆 RunContext 的角色。
 """
+from __future__ import annotations
+
 import config
 from utils import logger
 

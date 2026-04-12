@@ -7,6 +7,7 @@
 - 可选持久化保存到本地
 - 支持 Retina 屏幕缩放适配
 """
+from __future__ import annotations
 
 import utils.logger as logger
 
@@ -16,8 +17,6 @@ import config
 import base64
 import argparse
 from io import BytesIO
-from typing import Optional
-
 import pyautogui
 import pywinctl
 

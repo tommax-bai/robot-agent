@@ -23,7 +23,7 @@ class LlmTool:
     def __init__(self, default_trace_id: str = "system"):
         self._default_trace_id = default_trace_id
 
-    def with_trace(self, trace_id: str) -> "LlmTool":
+    def with_trace(self, trace_id: str) -> LlmTool:
         """派生一个绑定指定 trace_id 的子实例（轻量，仅记 trace_id）"""
         return self.__class__(default_trace_id=trace_id)
 
@@ -84,7 +84,7 @@ class MockLlmTool(LlmTool):
         self._text_idx = 0
         self.call_log: list[dict] = []
 
-    def with_trace(self, trace_id: str) -> "MockLlmTool":
+    def with_trace(self, trace_id: str) -> MockLlmTool:
         return self  # mock 不需要派生
 
     def call_json(self, messages, model, client_name, trace_id=None, **kwargs):

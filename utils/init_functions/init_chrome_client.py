@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from selenium import webdriver  
 from selenium.webdriver.chrome.options import Options  
 import subprocess  
@@ -5,7 +7,7 @@ import time
 import requests  
 import os  
 import threading  
-from typing import Optional, Any, List, Dict  
+from typing import Any, List, Dict
   
 import config  
 import utils.logger as logger  
@@ -13,10 +15,10 @@ import utils.logger as logger
   
 class ChromeClient:  
     def __init__(self):  
-        self._driver: Optional[webdriver.Chrome] = None  
+        self._driver: webdriver.Chrome | None = None
         self._lock = threading.Lock()  
         self._running = False  
-        self._monitor_thread: Optional[threading.Thread] = None  
+        self._monitor_thread: threading.Thread | None = None
   
     # ==================== Tab 管理功能 ====================  
   
@@ -126,7 +128,7 @@ class ChromeClient:
                 return self.switch_to_tab(tab["id"])  
         return False  
   
-    def new_tab(self, url: str = "about:blank") -> Optional[str]:  
+    def new_tab(self, url: str = "about:blank") -> str | None:
         """  
         打开新标签页  
           
@@ -165,7 +167,7 @@ class ChromeClient:
             logger.error(f"关闭标签页失败: {e}")  
             return False  
   
-    def get_current_tab(self) -> Optional[Dict[str, Any]]:
+    def get_current_tab(self) -> Dict[str, Any] | None:
         """获取当前活动标签页信息"""
         with self._lock:
             if not self._driver:
@@ -180,7 +182,7 @@ class ChromeClient:
             except Exception:
                 return None
 
-    def get_window_bounds(self) -> Optional[Dict[str, int]]:
+    def get_window_bounds(self) -> Dict[str, int] | None:
         """
         通过 CDP 获取本项目连接的 Chrome 窗口 bounds（left/top/width/height，单位 DIP）。
 
@@ -292,7 +294,7 @@ class ChromeClient:
             return self._driver.execute_async_script(script)  
   
     @property  
-    def current_url(self) -> Optional[str]:  
+    def current_url(self) -> str | None:
         """当前 URL"""  
         with self._lock:  
             if self._driver:  
@@ -395,7 +397,7 @@ class ChromeClient:
             logger.error({"msg": "启动 Chrome 失败", "error": str(e)})
             return False
   
-    def _connect_chrome(self) -> Optional[webdriver.Chrome]:  
+    def _connect_chrome(self) -> webdriver.Chrome | None:
         """连接 Chrome，增加重试机制以应对启动时的不稳定状态"""  
         max_retries = 3
         for i in range(max_retries):
@@ -446,7 +448,7 @@ class ChromeClient:
   
 # ==================== 全局单例 ====================  
   
-_instance: Optional[ChromeClient] = None  
+_instance: ChromeClient | None = None
   
   
 def init_chrome_client() -> ChromeClient:
@@ -495,4 +497,3 @@ def disable_chrome_auto_restart() -> None:
     """
     if _instance is not None:
         _instance._running = False
-

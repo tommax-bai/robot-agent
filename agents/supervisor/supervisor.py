@@ -1,17 +1,12 @@
 """
 Supervisor: 调度与编排核心。
 
-职责（仅此而已）：
+职责：
 - 维护当前模式（PATROLLING / WAITING / EXECUTING / DEBUG）
 - 接收外部任务请求，抢占当前任务
-- 启动并驱动调度循环
+- 启动和停止自动调度循环
 - 提供状态查询给 API 层
-- 为子组件（如 task_rounds）提供 RunContext 工厂
-
-显式不再做的事：
-- 不持有业务 state（title_few_shots 等全部从 state repo 即时读）
-- 不维护 aborted_trace_ids set（用 ActiveRun.cancel）
-- 不知道任务轮次的细节（交给 task_rounds 模块）
+- 为子组件提供 RunContext 工厂
 """
 from __future__ import annotations
 
@@ -21,7 +16,7 @@ import uuid
 from contextlib import contextmanager
 from datetime import datetime
 from enum import Enum
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 import config
 import utils.logger as logger
@@ -65,10 +60,10 @@ class Supervisor:
 
     def __init__(
         self,
-        operator: "Operator",
-        strategist: "Strategist",
-        state: "AgentStateRepo",
-        llm: "LlmTool",
+        operator: Operator,
+        strategist: Strategist,
+        state: AgentStateRepo,
+        llm: LlmTool,
     ):
         self._operator = operator
         self._strategist = strategist
@@ -81,20 +76,20 @@ class Supervisor:
             else AgentMode.WAITING
         )
 
-        self._current_run: Optional[ActiveRun] = None
-        self._scheduler_task: Optional[asyncio.Task] = None
+        self._current_run: ActiveRun | None = None
+        self._scheduler_task: asyncio.Task | None = None
 
         logger.info({"msg": "Supervisor 初始化完成", "mode": self._mode.value})
 
     # ── 公开依赖访问 ──────────────────────────────────────────
-    # task_rounds 等子组件通过这些属性获取依赖，避免触碰私有字段
+    # scheduler/scheduled_jobs 等子组件通过这些属性获取依赖，避免触碰私有字段
 
     @property
-    def state(self) -> "AgentStateRepo":
+    def state(self) -> AgentStateRepo:
         return self._state
 
     @property
-    def strategist(self) -> "Strategist":
+    def strategist(self) -> Strategist:
         return self._strategist
 
     def make_ctx(self, trace_id: str) -> RunContext:
@@ -119,6 +114,46 @@ class Supervisor:
         if mode in (AgentMode.DEBUG, AgentMode.WAITING) and self._current_run:
             self._current_run.ctx.cancel.cancel(f"mode→{mode.value}")
 
+    # ── 调度循环 ──────────────────────────────────────────────
+
+    def start_scheduler(self) -> None:
+        if self._scheduler_task is None or self._scheduler_task.done():
+            from agents.supervisor.scheduler import run_scheduler_loop
+            self._scheduler_task = asyncio.create_task(run_scheduler_loop(self))
+            logger.info({"msg": "统一调度器已启动"})
+
+    def request_cancel(self, reason: str = "external") -> None:
+        """非阻塞地请求停止当前一切活动：调度循环 + 当前任务的 cancel token。
+
+        给信号处理器（SIGINT/SIGTERM）等"不能 await"的调用方使用。
+        实际等待退出由调用方在 await 上下文里另行处理（例如 shutdown）。
+        """
+        if self._current_run is not None:
+            self._current_run.ctx.cancel.cancel(reason)
+        if self._scheduler_task is not None and not self._scheduler_task.done():
+            self._scheduler_task.cancel()
+
+    async def shutdown(self) -> None:
+        """优雅关闭：取消调度循环、终止当前任务、等待退出"""
+        logger.info({"msg": "Supervisor 正在关闭"})
+        # 1. 取消调度循环
+        if self._scheduler_task and not self._scheduler_task.done():
+            self._scheduler_task.cancel()
+            try:
+                await self._scheduler_task
+            except (asyncio.CancelledError, Exception):
+                pass
+
+        # 2. 取消正在执行的任务并等待退出
+        if self._current_run:
+            self._current_run.ctx.cancel.cancel("supervisor_shutdown")
+            try:
+                await asyncio.wait_for(self._current_run.done.wait(), timeout=5.0)
+            except asyncio.TimeoutError:
+                logger.warning({"msg": "等待任务退出超时", "trace_id": self._current_run.trace_id})
+
+        logger.info({"msg": "Supervisor 已关闭"})
+
     # ── 任务执行 ──────────────────────────────────────────────
 
     async def execute_task(
@@ -140,7 +175,7 @@ class Supervisor:
         finally:
             self.set_mode(prev_mode)
 
-    async def execute_round(self, task: Task, trace_id: str) -> TaskResult:
+    async def execute_scheduled_task(self, task: Task, trace_id: str) -> TaskResult:
         """
         调度器内部入口：用于跑 patrol/dm/cr/post 等定时任务。
         不切 mode，不抢占（调度器自己保证不并发）。
@@ -178,46 +213,6 @@ class Supervisor:
             if self._current_run is run:
                 self._current_run = None
 
-    # ── 调度循环 ──────────────────────────────────────────────
-
-    def start_scheduler(self) -> None:
-        if self._scheduler_task is None or self._scheduler_task.done():
-            from agents.supervisor.task_rounds import run_schedule_loop
-            self._scheduler_task = asyncio.create_task(run_schedule_loop(self))
-            logger.info({"msg": "统一调度器已启动"})
-
-    def request_cancel(self, reason: str = "external") -> None:
-        """非阻塞地请求停止当前一切活动：调度循环 + 当前任务的 cancel token。
-
-        给信号处理器（SIGINT/SIGTERM）等"不能 await"的调用方使用。
-        实际等待退出由调用方在 await 上下文里另行处理（例如 shutdown）。
-        """
-        if self._current_run is not None:
-            self._current_run.ctx.cancel.cancel(reason)
-        if self._scheduler_task is not None and not self._scheduler_task.done():
-            self._scheduler_task.cancel()
-
-    async def shutdown(self) -> None:
-        """优雅关闭：取消调度循环、终止当前任务、等待退出"""
-        logger.info({"msg": "Supervisor 正在关闭"})
-        # 1. 取消调度循环
-        if self._scheduler_task and not self._scheduler_task.done():
-            self._scheduler_task.cancel()
-            try:
-                await self._scheduler_task
-            except (asyncio.CancelledError, Exception):
-                pass
-
-        # 2. 取消正在执行的任务并等待退出
-        if self._current_run:
-            self._current_run.ctx.cancel.cancel("supervisor_shutdown")
-            try:
-                await asyncio.wait_for(self._current_run.done.wait(), timeout=5.0)
-            except asyncio.TimeoutError:
-                logger.warning({"msg": "等待任务退出超时", "trace_id": self._current_run.trace_id})
-
-        logger.info({"msg": "Supervisor 已关闭"})
-
     # ── 状态查询 ──────────────────────────────────────────────
 
     def get_status(self) -> dict:
@@ -227,18 +222,14 @@ class Supervisor:
             "mode": self._mode.value,
             "is_active": run is not None,
             "task_kind": run.task.kind if run else "idle",
-            "current_slot": self.current_task_slot(now) or "rest",
+            "current_slot": self.current_scheduled_task(now) or "rest",
             "current_trace_id": run.trace_id if run else None,
             "current_goal": run.task.goal if run else None,
             "running_seconds": int(time.time() - run.start_time) if run else 0,
             "timestamp": now.strftime("%Y-%m-%d %H:%M:%S"),
         }
 
-    def current_task_slot(self, now: datetime) -> str | None:
+    def current_scheduled_task(self, now: datetime) -> str | None:
         """根据 daily_schedule 判断当前应执行的任务类型"""
-        schedule = config.agent["maintenance"]["daily_schedule"]
-        current_time = now.strftime("%H:%M")
-        for slot in schedule:
-            if slot["start"] <= current_time < slot["end"]:
-                return slot["task"]
-        return None
+        from agents.supervisor.scheduler import resolve_scheduled_task
+        return resolve_scheduled_task(now)

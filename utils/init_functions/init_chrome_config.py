@@ -4,6 +4,8 @@
 只杀**我们自己的** Chrome for Testing 实例（基于配置的 chrome_binary 路径或 debug_port），
 绝不影响用户正在使用的常规 Chrome。
 """
+from __future__ import annotations
+
 import subprocess
 import time
 

@@ -1,6 +1,8 @@
 """
 JSON 解析工具：从 LLM 原始输出中提取和归一化 JSON。
 """
+from __future__ import annotations
+
 import json
 import re
 

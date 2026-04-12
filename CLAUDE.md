@@ -126,7 +126,7 @@ Operator.run(task, ctx)
 TaskResult
 ```
 
-For automated rounds (patrol/post/dm/cr), `agents/supervisor/task_rounds.py` registers handlers in `_ROUND_HANDLERS` dict — new task types are added by appending to the dict, not by editing supervisor.
+For scheduled jobs (patrol/post/dm/cr), `agents/supervisor/scheduled_jobs.py` registers handlers in `SCHEDULED_JOB_HANDLERS` dict — new task types are added by appending to the dict, not by editing supervisor.
 
 ### Coordinate system
 

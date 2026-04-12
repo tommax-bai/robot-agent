@@ -41,19 +41,19 @@ class TaskResult:
     """统一的任务结果，支持嵌套聚合"""
     ok: bool
     summary: str = ""
-    sub_results: list["TaskResult"] = field(default_factory=list)
-    error: "AgentError | None" = None
+    sub_results: list[TaskResult] = field(default_factory=list)
+    error: AgentError | None = None
 
     @classmethod
-    def success(cls, summary: str = "") -> "TaskResult":
+    def success(cls, summary: str = "") -> TaskResult:
         return cls(ok=True, summary=summary)
 
     @classmethod
-    def failure(cls, error: "AgentError") -> "TaskResult":
+    def failure(cls, error: AgentError) -> TaskResult:
         return cls(ok=False, error=error)
 
     @classmethod
-    def aggregate(cls, results: list["TaskResult"]) -> "TaskResult":
+    def aggregate(cls, results: list[TaskResult]) -> TaskResult:
         all_ok = all(r.ok for r in results)
         last_summary = next((r.summary for r in reversed(results) if r.summary), "")
         last_error = next((r.error for r in reversed(results) if r.error), None)
@@ -122,7 +122,7 @@ class Agent(Protocol):
     """所有 agent 实现的统一契约"""
     name: str
 
-    async def run(self, task: Task, ctx: "RunContext") -> TaskResult: ...
+    async def run(self, task: Task, ctx: RunContext) -> TaskResult: ...
 
 
 # ═══════════════════════════════════════════════════════
@@ -152,7 +152,7 @@ class Decision:
     raw: str  # 保留原始文本用于日志
 
     @classmethod
-    def parse(cls, llm_output: Any, raw_text: str) -> "Decision":
+    def parse(cls, llm_output: Any, raw_text: str) -> Decision:
         """
         从 LLM 解析后的对象（dict 或 list）构造 Decision。
         在这一层做所有的脏数据清洗：键名归一化、字段名变体、坐标键名兜底等。
@@ -227,11 +227,11 @@ class ActionOutcome:
     summary: str = ""
 
     @classmethod
-    def finished(cls, summary: str, results: list[ActionResult]) -> "ActionOutcome":
+    def finished(cls, summary: str, results: list[ActionResult]) -> ActionOutcome:
         return cls(results=results, is_finish=True, summary=summary)
 
     @classmethod
-    def continuing(cls, results: list[ActionResult]) -> "ActionOutcome":
+    def continuing(cls, results: list[ActionResult]) -> ActionOutcome:
         return cls(results=results, is_finish=False)
 
 

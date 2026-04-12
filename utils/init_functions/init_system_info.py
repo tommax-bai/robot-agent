@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import sys
 import config
 import utils.logger as logger

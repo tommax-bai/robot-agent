@@ -1,6 +1,8 @@
 """
 Prompt 模板加载工具：解析带 YAML frontmatter 的 .md 模板文件。
 """
+from __future__ import annotations
+
 import yaml
 import utils.logger as logger
 

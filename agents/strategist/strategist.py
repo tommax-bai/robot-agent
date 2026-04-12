@@ -41,8 +41,8 @@ class Strategist:
 
     def __init__(
         self,
-        state: "AgentStateRepo",
-        llm: "LlmTool",
+        state: AgentStateRepo,
+        llm: LlmTool,
         prompts_dir: str = "prompts/agent",
     ):
         self._state = state
