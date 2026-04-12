@@ -8,6 +8,7 @@ Supervisor: 调度与编排核心。
 - 提供状态查询给 API 层
 - 为子组件提供 RunContext 工厂
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -70,11 +71,7 @@ class Supervisor:
         self._state = state
         self._llm = llm
 
-        self._mode = (
-            AgentMode.PATROLLING
-            if config.agent["default_mode"] == "patrolling"
-            else AgentMode.WAITING
-        )
+        self._mode = AgentMode.PATROLLING if config.agent["default_mode"] == "patrolling" else AgentMode.WAITING
 
         self._current_run: ActiveRun | None = None
         self._scheduler_task: asyncio.Task | None = None
@@ -119,6 +116,7 @@ class Supervisor:
     def start_scheduler(self) -> None:
         if self._scheduler_task is None or self._scheduler_task.done():
             from agents.supervisor.scheduler import run_scheduler_loop
+
             self._scheduler_task = asyncio.create_task(run_scheduler_loop(self))
             logger.info({"msg": "统一调度器已启动"})
 
@@ -194,10 +192,12 @@ class Supervisor:
         try:
             await asyncio.wait_for(old_run.done.wait(), timeout=10.0)
         except asyncio.TimeoutError:
-            logger.warning({
-                "msg": "等待旧任务退出超时",
-                "trace_id": old_run.trace_id,
-            })
+            logger.warning(
+                {
+                    "msg": "等待旧任务退出超时",
+                    "trace_id": old_run.trace_id,
+                }
+            )
 
     @contextmanager
     def _claim_run(self, task: Task, trace_id: str | None = None):
@@ -232,4 +232,5 @@ class Supervisor:
     def current_scheduled_task(self, now: datetime) -> str | None:
         """根据 daily_schedule 判断当前应执行的任务类型"""
         from agents.supervisor.scheduler import resolve_scheduled_task
+
         return resolve_scheduled_task(now)

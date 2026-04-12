@@ -6,6 +6,7 @@ Scheduler: 自动调度循环与时段解析。
 - 在不同 AgentMode 下控制调度等待节奏
 - 分派到 scheduled_jobs 中的具体作业
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -22,7 +23,7 @@ if TYPE_CHECKING:
 
 def resolve_scheduled_task(now: datetime) -> str | None:
     """根据 daily_schedule 判断当前应执行的任务类型。"""
-    schedule = config.agent["maintenance"]["daily_schedule"]
+    schedule = config.agent["schedule"]["daily_schedule"]
     current_time = now.strftime("%H:%M")
     for slot in schedule:
         if slot["start"] <= current_time < slot["end"]:

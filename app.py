@@ -63,15 +63,18 @@ def _install_sigint_escalator(container) -> None:
             pass
 
         try:
-            logger.warning({
-                "msg": f"收到信号 {signum}，正在停止任务… 再按一次 Ctrl+C 立即强制退出",
-            })
+            logger.warning(
+                {
+                    "msg": f"收到信号 {signum}，正在停止任务… 再按一次 Ctrl+C 立即强制退出",
+                }
+            )
         except Exception:
             pass
 
         # 2. 停止 Chrome 监控自动重启（同步调用，仅翻一个 flag）
         try:
             from utils.init_functions.init_chrome_client import disable_chrome_auto_restart
+
             disable_chrome_auto_restart()
         except Exception as e:
             try:
@@ -127,9 +130,20 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error({"msg": "Supervisor 关闭异常", "error": str(e)})
 
+    try:
+        container.page_context_cache.shutdown()
+    except Exception as e:
+        logger.error({"msg": "页面分类后台任务关闭异常", "error": str(e)})
+
+    try:
+        container.behavior_summarizer.shutdown()
+    except Exception as e:
+        logger.error({"msg": "行为总结后台任务关闭异常", "error": str(e)})
+
     # 关闭 Chrome 客户端
     try:
         from utils.init_functions.init_chrome_client import close_chrome_client
+
         close_chrome_client()
     except Exception as e:
         logger.error({"msg": "Chrome 客户端关闭异常", "error": str(e)})
@@ -150,13 +164,15 @@ app.add_middleware(
 # 全局异常 handler：路由内未捕获异常统一返回结构化响应
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
-    logger.error({
-        "msg": "未捕获异常",
-        "path": str(request.url.path),
-        "method": request.method,
-        "error": str(exc),
-        "type": type(exc).__name__,
-    })
+    logger.error(
+        {
+            "msg": "未捕获异常",
+            "path": str(request.url.path),
+            "method": request.method,
+            "error": str(exc),
+            "type": type(exc).__name__,
+        }
+    )
     return JSONResponse(
         status_code=500,
         content={

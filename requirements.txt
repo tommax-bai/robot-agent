@@ -18,7 +18,9 @@ importlib_metadata==8.7.1
 jiter==0.12.0
 MouseInfo==0.1.3
 mypy_extensions==1.1.0
+numpy==2.4.4
 openai==2.15.0
+opencv-python-headless==4.13.0.92
 outcome==1.3.0.post0
 packaging==25.0
 pillow==12.1.0

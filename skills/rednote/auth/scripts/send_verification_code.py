@@ -1,6 +1,7 @@
 """
 等待验证码回调：阻塞式等待，带超时保护防止永久卡死。
 """
+
 from __future__ import annotations
 
 import time
@@ -29,11 +30,13 @@ def send_verification_code(trace_id: str):
                 }
             time.sleep(_POLL_INTERVAL)
 
-        logger.error({
-            "msg": "等待验证码超时",
-            "trace_id": trace_id,
-            "timeout_seconds": _TIMEOUT_SECONDS,
-        })
+        logger.error(
+            {
+                "msg": "等待验证码超时",
+                "trace_id": trace_id,
+                "timeout_seconds": _TIMEOUT_SECONDS,
+            }
+        )
         return {
             "ok": False,
             "message": f"等待验证码超时（{_TIMEOUT_SECONDS}秒）",

@@ -7,14 +7,16 @@ SkillRegistry: skill 加载与查询的统一入口。
 - 工具调用通过 registry 路由，禁止外部直接拿 dict
 - 同名工具冲突时显式报错，不再静默覆盖
 """
+
 from __future__ import annotations
 
 import importlib.util
 import inspect
-import yaml
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
+
+import yaml
 
 import utils.logger as logger
 from agents.base import ToolNotFoundError
@@ -23,6 +25,7 @@ from agents.base import ToolNotFoundError
 @dataclass(frozen=True)
 class SkillManifest:
     """SKILL.md 的纯元数据"""
+
     name: str
     description: str
     group: str
@@ -32,6 +35,7 @@ class SkillManifest:
 @dataclass
 class Skill:
     """运行时 skill 对象：元数据 + 指令体 + 懒加载的工具"""
+
     manifest: SkillManifest
     instructions: str
     scripts_dir: Path
@@ -60,18 +64,22 @@ class Skill:
                 for fn_name, fn in inspect.getmembers(module, inspect.isfunction):
                     if fn.__module__ == module_name:
                         tools[fn_name] = fn
-                        logger.info({
-                            "msg": "加载 skill 工具",
-                            "skill": self.manifest.name,
-                            "tool": fn_name,
-                            "source": py_file.name,
-                        })
+                        logger.info(
+                            {
+                                "msg": "加载 skill 工具",
+                                "skill": self.manifest.name,
+                                "tool": fn_name,
+                                "source": py_file.name,
+                            }
+                        )
             except Exception as e:
-                logger.error({
-                    "msg": "加载 skill 脚本失败",
-                    "path": str(py_file),
-                    "error": str(e),
-                })
+                logger.error(
+                    {
+                        "msg": "加载 skill 脚本失败",
+                        "path": str(py_file),
+                        "error": str(e),
+                    }
+                )
         return tools
 
 
@@ -81,7 +89,7 @@ class SkillRegistry:
     def __init__(self, root: str | Path = "skills"):
         self._root = Path(root)
         self._skills: dict[str, Skill] = {}
-        self._tool_to_skill: dict[str, str] = {}    # tool_name -> owning skill name
+        self._tool_to_skill: dict[str, str] = {}  # tool_name -> owning skill name
         self._scan()
 
     def _scan(self) -> None:
@@ -95,17 +103,21 @@ class SkillRegistry:
                 if skill is None:
                     continue
                 if skill.manifest.name in self._skills:
-                    logger.warning({
-                        "msg": "skill 名称重复，后者覆盖前者",
-                        "name": skill.manifest.name,
-                    })
+                    logger.warning(
+                        {
+                            "msg": "skill 名称重复，后者覆盖前者",
+                            "name": skill.manifest.name,
+                        }
+                    )
                 self._skills[skill.manifest.name] = skill
             except Exception as e:
-                logger.error({
-                    "msg": "解析 SKILL.md 失败",
-                    "path": str(skill_file),
-                    "error": str(e),
-                })
+                logger.error(
+                    {
+                        "msg": "解析 SKILL.md 失败",
+                        "path": str(skill_file),
+                        "error": str(e),
+                    }
+                )
 
     def _parse(self, path: Path) -> Skill | None:
         content = path.read_text(encoding="utf-8")

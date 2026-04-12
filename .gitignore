@@ -1,12 +1,18 @@
 .venv/
 venv/
 .vscode/
+.ruff_cache/
+
+.env
+.env.*
+!.env.example
 
 *.pyc
 __pycache__/
 __pycache__/cig.cpython-313.pyconf
 
 data/
+!data/intent_registry.json
 history/
 logs/
 logs/token_usage/

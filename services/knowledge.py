@@ -6,6 +6,7 @@
 - harvest_knowledge 通过副作用更新 state，无返回值
 - get_evolution_context 是纯查询，返回 EvolutionContext dataclass
 """
+
 from __future__ import annotations
 
 import os
@@ -24,6 +25,7 @@ if TYPE_CHECKING:
 @dataclass(frozen=True)
 class EvolutionContext:
     """Agent 的进化状态与注意力权重"""
+
     home_weight: float
     search_weight: float
     is_mature: bool
@@ -44,11 +46,10 @@ def harvest_knowledge(summary: str, trace_id: str, state: AgentStateRepo) -> Non
 
     # 1. 提取爆款标题 [SHOT] 和 对应正文 [CONTENT]
     note_matches = re.findall(
-        r'[\[【]SHOT[\]】][:：]?\s*(.*?)\s*[\[【]CONTENT[\]】][:：]?\s*(.*?)(?=[\[【]SHOT[\]】]|$)',
-        summary, re.DOTALL
+        r"[\[【]SHOT[\]】][:：]?\s*(.*?)\s*[\[【]CONTENT[\]】][:：]?\s*(.*?)(?=[\[【]SHOT[\]】]|$)", summary, re.DOTALL
     )
     if note_matches:
-        save_enabled = config.agent["maintenance"]["save_titles_to_local"]
+        save_enabled = config.agent["storage"]["save_titles_to_local"]
         for title, content in note_matches:
             title = title.strip()
             content = content.strip()
@@ -61,7 +62,7 @@ def harvest_knowledge(summary: str, trace_id: str, state: AgentStateRepo) -> Non
         logger.info({"msg": f"收割到 {len(note_matches)} 条笔记详情"}, trace_id)
     else:
         # 兼容旧格式
-        new_shots = re.findall(r'[\[【]SHOT[\]】][:：]?\s*(.+)', summary)
+        new_shots = re.findall(r"[\[【]SHOT[\]】][:：]?\s*(.+)", summary)
         if new_shots:
             for s in new_shots:
                 if s not in title_few_shots:
@@ -69,28 +70,46 @@ def harvest_knowledge(summary: str, trace_id: str, state: AgentStateRepo) -> Non
             logger.info({"msg": f"收割到 {len(new_shots)} 条爆款标题样本"}, trace_id)
 
     # 2. 学习笔记 [LEARNING]
-    new_notes = re.findall(r'[\[【]LEARNING[\]】][:：]?\s*(.+)', summary)
+    new_notes = re.findall(r"[\[【]LEARNING[\]】][:：]?\s*(.+)", summary)
 
     # 3. 话题词 [TAG]
     extracted_tags: list[str] = []
-    for tag_line in re.findall(r'[\[【]TAG[\]】][:：]?\s*(.+)', summary):
-        extracted_tags.extend(re.findall(r'#(\w+)', tag_line))
+    for tag_line in re.findall(r"[\[【]TAG[\]】][:：]?\s*(.+)", summary):
+        extracted_tags.extend(re.findall(r"#(\w+)", tag_line))
 
     # 4. 焦虑点 [ANXIETY]
-    new_anxieties = re.findall(r'[\[【]ANXIETY[\]】][:：]?\s*(.+)', summary)
+    new_anxieties = re.findall(r"[\[【]ANXIETY[\]】][:：]?\s*(.+)", summary)
 
     # 5. 知识点 [KNOWLEDGE]
-    new_knowledge = re.findall(r'[\[【]KNOWLEDGE[\]】][:：]?\s*(.+)', summary)
+    new_knowledge = re.findall(r"[\[【]KNOWLEDGE[\]】][:：]?\s*(.+)", summary)
 
     # 6. 心情 [MOOD]
-    mood_match = re.search(r'[\[【]MOOD[\]】][:：]?\s*(\w+)', summary)
+    mood_match = re.search(r"[\[【]MOOD[\]】][:：]?\s*(\w+)", summary)
     new_mood = mood_match.group(1) if mood_match else None
 
     # 7. 灵感 [INSIGHT] (带#话题)
-    if "[INSIGHT]" in summary or "【INSIGHT】" in summary:
-        for word in re.findall(r'#(\w+)', summary):
+    new_insights: list[str] = []
+    for insight_line in re.findall(r"[\[【]INSIGHT[\]】][:：]?\s*(.+)", summary):
+        for word in re.findall(r"#(\w+)", insight_line):
             if word not in inspiration_pool:
                 inspiration_pool.append(word)
+                new_insights.append(word)
+
+    # 收割汇总日志
+    harvested = {
+        k: v for k, v in {
+            "LEARNING": len(new_notes),
+            "TAG": len(extracted_tags),
+            "ANXIETY": len(new_anxieties),
+            "KNOWLEDGE": len(new_knowledge),
+            "MOOD": new_mood or "",
+            "INSIGHT": len(new_insights),
+        }.items() if v
+    }
+    if harvested:
+        logger.info({"msg": "知识收割完成", **harvested}, trace_id)
+    else:
+        logger.info({"msg": "知识收割完成，未提取到新标签"}, trace_id)
 
     # 8. 持久化
     state.update(
@@ -124,11 +143,7 @@ def get_evolution_context(state: AgentStateRepo, title_few_shots: list[str]) -> 
     基于 agent_state 的丰富程度决定 首页 vs 搜索 的比例。
     """
     snapshot = state.get()
-    total_knowledge = (
-        len(snapshot["learning_notes"])
-        + len(snapshot["hashtags"])
-        + len(title_few_shots)
-    )
+    total_knowledge = len(snapshot["learning_notes"]) + len(snapshot["hashtags"]) + len(title_few_shots)
 
     home_weight = 0.10 if total_knowledge < 100 else 0.30
     return EvolutionContext(
@@ -137,4 +152,3 @@ def get_evolution_context(state: AgentStateRepo, title_few_shots: list[str]) -> 
         is_mature=total_knowledge > 30,
         total_knowledge=total_knowledge,
     )
-

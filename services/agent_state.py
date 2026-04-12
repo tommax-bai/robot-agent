@@ -7,17 +7,17 @@ Agent 状态管理：通用的状态读写服务。
 - DEFAULT_STATE 是 state 字段默认值的唯一定义点
 - 通过 AgentStateRepo 注入到 RunContext，可被替换为 InMemoryStateRepo 用于测试
 """
+
 from __future__ import annotations
 
 import copy
 import datetime
 import json
-import os
+from pathlib import Path
 from typing import Protocol
 
 import config
 import utils.logger as logger
-
 
 # Agent state 的完整 schema 与默认值
 DEFAULT_STATE: dict = {
@@ -75,16 +75,20 @@ def _apply_patch(
     today_str = now.strftime("%Y-%m-%d")
 
     if followers is not None:
-        state["followers_history"].append({
-            "date": today_str,
-            "time": now.strftime("%H:%M:%S"),
-            "followers": followers,
-            "likes": likes,
-        })
-        state["followers_history"] = state["followers_history"][-limits["followers_history"]:]
+        state["followers_history"].append(
+            {
+                "date": today_str,
+                "time": now.strftime("%H:%M:%S"),
+                "followers": followers,
+                "likes": likes,
+            }
+        )
+        state["followers_history"] = state["followers_history"][-limits["followers_history"] :]
 
     if inspiration_pool is not None:
-        state["inspiration_pool"] = _merge_and_trim(state["inspiration_pool"], inspiration_pool, limits["inspiration_pool"])
+        state["inspiration_pool"] = _merge_and_trim(
+            state["inspiration_pool"], inspiration_pool, limits["inspiration_pool"]
+        )
     if last_discovery is not None:
         state["last_discovery"] = last_discovery
     if title_few_shots is not None:
@@ -92,9 +96,13 @@ def _apply_patch(
     if hashtags is not None:
         state["hashtags"] = _merge_and_trim(state["hashtags"], hashtags, limits["hashtags"])
     if anxiety_keywords is not None:
-        state["anxiety_keywords"] = _merge_and_trim(state["anxiety_keywords"], anxiety_keywords, limits["anxiety_keywords"])
+        state["anxiety_keywords"] = _merge_and_trim(
+            state["anxiety_keywords"], anxiety_keywords, limits["anxiety_keywords"]
+        )
     if knowledge_topics is not None:
-        state["knowledge_topics"] = _merge_and_trim(state["knowledge_topics"], knowledge_topics, limits["knowledge_topics"])
+        state["knowledge_topics"] = _merge_and_trim(
+            state["knowledge_topics"], knowledge_topics, limits["knowledge_topics"]
+        )
     if mood is not None:
         state["mood"] = mood
     if learning_notes is not None:
@@ -120,6 +128,7 @@ def _apply_patch(
 # ═══════════════════════════════════════════════════════
 # 仓储接口与实现
 # ═══════════════════════════════════════════════════════
+
 
 class AgentStateRepo(Protocol):
     """Agent 状态读写接口，由 RunContext 注入"""
@@ -148,23 +157,21 @@ class AgentStateRepo(Protocol):
 class JsonFileStateRepo:
     """文件后端：读写 JSON 到磁盘"""
 
-    def __init__(self, file_path: str, limits: dict):
-        self._file_path = file_path
+    def __init__(self, file_path: str | Path, limits: dict):
+        self._path = Path(file_path)
         self._limits = limits
 
     def get(self) -> dict:
         state = copy.deepcopy(DEFAULT_STATE)
-        if os.path.exists(self._file_path):
-            with open(self._file_path, "r", encoding="utf-8") as f:
-                state.update(json.load(f))
+        if self._path.exists():
+            state.update(json.loads(self._path.read_text(encoding="utf-8")))
         return state
 
     def update(self, **kwargs) -> dict:
         try:
             state = _apply_patch(self.get(), self._limits, **kwargs)
-            os.makedirs(os.path.dirname(self._file_path), exist_ok=True)
-            with open(self._file_path, "w", encoding="utf-8") as f:
-                json.dump(state, f, ensure_ascii=False, indent=4)
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            self._path.write_text(json.dumps(state, ensure_ascii=False, indent=4), encoding="utf-8")
             logger.info({"msg": "状态同步成功"}, kwargs.get("trace_id", "system"))
             return state
         except Exception as e:
@@ -202,7 +209,7 @@ def default_repo() -> AgentStateRepo:
     global _default_repo
     if _default_repo is None:
         _default_repo = JsonFileStateRepo(
-            file_path=config.agent["maintenance"]["state_file"],
+            file_path=config.agent["storage"]["state_file"],
             limits=config.agent["state_limits"],
         )
     return _default_repo

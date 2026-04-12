@@ -55,7 +55,7 @@ The codebase is divided into 5 layers, each with a single responsibility:
 | `Strategist` | `agents/strategist/strategist.py` | Content strategy: brainstorm topics, generate patrol/posting goals |
 
 All agents share the **typed contract** defined in `agents/base.py`:
-- `Task` / `SubTask` / `Plan` / `TaskResult` — structured data flow (no `dict[str, Any]`)
+- `Task` / `SubTask` (with `intent` field) / `Plan` / `TaskResult` — structured data flow (no `dict[str, Any]`)
 - `Decision` / `Action` / `Observation` / `ActionOutcome` / `ActionResult` — vision-loop data
 - `AgentError` hierarchy — `CancelledError`, `LlmError`, `PlannerError`, `StrategistError`, `StepBudgetExceededError`, `DecisionParseError`, `ToolNotFoundError`
 
@@ -72,6 +72,7 @@ All agents share the **typed contract** defined in `agents/base.py`:
 
 - **`AgentStateRepo`** (`services/agent_state.py`) — Protocol with `JsonFileStateRepo` (production) and `InMemoryStateRepo` (test). State has a `DEFAULT_STATE` schema; `get()` always returns a complete dict.
 - **`SkillRegistry`** (`services/skill_registry.py`) — Replaces the old `SkillLoader`. Lazy-loads scripts (manifest scanned at boot, scripts loaded on first use). Tool calls go through `invoke_tool(name, params, trace_id)`.
+- **`IntentRegistry`** (`services/intent_registry.py`) — Planner 和 BehaviorSummarizer 的共享 intent 词表。从 `data/intent_registry.json` 加载，提供 `resolve()` 归一化和 `format_for_prompt()` 注入。是 intent 的唯一真相源。
 - **`knowledge.py`** — `harvest_knowledge(summary, trace_id, state)` extracts `[SHOT]/[TAG]/[MOOD]/...` from task summaries and writes to state. `get_evolution_context(state, title_few_shots)` computes attention weights.
 - **`history.py`** — Task history initialization (writes to `history/index.jsonl` and `history/{trace_id}.md`).
 
@@ -88,7 +89,7 @@ All agents share the **typed contract** defined in `agents/base.py`:
 
 ### Configuration (`config.py`)
 
-Three top-level namespaces (`system`, `model`, `agent`). Validated at startup via `config.validate()` against `_REQUIRED_SCHEMA` — missing keys cause immediate `RuntimeError` instead of silent runtime failures. Long content (e.g. recruitment info) lives in external files under `prompts/`.
+Three top-level namespaces (`system`, `model`, `agent`). `agent` 下按职责分为 `persona`（人设身份）、`schedule`（调度约束）、`storage`（持久化路径）、`planner`/`operator`/`page_classifier`/`behavior_summarizer`（模型配置）等子命名空间。Validated at startup via `config.validate()` against `_REQUIRED_SCHEMA` — missing keys cause immediate `RuntimeError` instead of silent runtime failures. Long content (e.g. recruitment info) lives in external files under `prompts/`.
 
 ### Prompt templates (`prompts/`)
 
@@ -97,6 +98,21 @@ All prompts are `.md` files loaded via `utils.prompt_template.load_prompt_templa
 - `prompts/agent/` — `brainstorm.md`, `patrol_goal.md`, `posting_goal_*.md` (with YAML frontmatter declaring `provider`/`model`/`temperature` for independent LLM calls)
 
 No prompt content is hardcoded in Python files.
+
+#### Prompt 变量注入约定
+
+项目中存在两种模板变量风格，各有适用场景：
+
+| 风格 | 语法 | 注入方式 | 适用场景 |
+|------|------|----------|----------|
+| **Python format** | `{VAR}` | `body.format(VAR=value)` | 模板中不含 JSON 花括号（`plan.md`, `action.md`, `sub_goal_constraint.md`, strategist 模板） |
+| **占位符替换** | `@@VAR@@` | `body.replace("@@VAR@@", value)` | 模板中含 JSON 示例（`page_classifier.md`, `behavior_summarizer.md`），避免 `.format()` 与 JSON `{}` 冲突 |
+
+新增 prompt 时：若模板正文含 JSON 示例，使用 `@@VAR@@`；否则使用 `{VAR}`。
+
+### Intent 注册表 (`data/intent_registry.json`)
+
+Planner 和 BehaviorSummarizer 的共享语义标签词表，是 intent 的唯一真相源。两端 LLM 调用时均注入此候选列表，输出的 intent 经 `IntentRegistry.resolve()` 归一化后用于 Recipe 精确匹配。新增 intent 后两端自动可见，无需改动 Python 代码。
 
 ### Execution flow
 
@@ -110,12 +126,16 @@ Supervisor.execute_task(task)
    ↓ claims new ActiveRun, derives RunContext
    ↓
 Operator.run(task, ctx)
-   ↓ Planner.generate_plan(ctx, task.goal) → Plan
+   ↓ Planner.generate_plan(ctx, task.goal) → Plan (subtasks with intent)
+   ↓   IntentRegistry.resolve() normalizes each subtask.intent
    ↓ for each subtask:
    ↓   SubtaskRunner.run(subtask, ctx)
+   ↓     RecipeOperator.try_run() — match by subtask.intent + page_state
+   ↓       hit → execute recipe steps (skip LLM) → done
+   ↓       miss → fall through to LLM
    ↓     VisionActionStep.run(subtask, ctx)
    ↓       loop:
-   ↓         _observe → screenshot
+   ↓         _observe → screenshot + PageContextCache.get_or_classify()
    ↓         _think → ctx.llm.call_json (with ConversationHistory)
    ↓         _act → ActionDispatcher.dispatch
    ↓                  → SkillRegistry.invoke_tool  (custom tools)
@@ -146,7 +166,6 @@ Supervisor uses `CancelToken` for cooperative tree-wise cancellation:
 - `GET /api/v1/agent/status` — current mode + active run + today's stats
 - `POST /api/v1/agent/patrol` — toggle scheduler on/off
 - `POST /api/v1/agent/mode/{debug,waiting}` — mode switching
-- `POST /api/v1/agent/maintenance/trigger` — force-run a maintenance task
 - `GET /api/v1/agent/chrome/{path}` — Chrome DevTools Protocol HTTP proxy
 - `WS /api/v1/agent/chrome/ws/{page_id}` — Chrome DevTools Protocol WebSocket proxy
 

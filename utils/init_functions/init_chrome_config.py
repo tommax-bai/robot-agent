@@ -4,6 +4,7 @@
 只杀**我们自己的** Chrome for Testing 实例（基于配置的 chrome_binary 路径或 debug_port），
 绝不影响用户正在使用的常规 Chrome。
 """
+
 from __future__ import annotations
 
 import subprocess
@@ -51,7 +52,9 @@ def _kill_existing_debug_chrome() -> None:
     try:
         result = subprocess.run(
             ["lsof", "-ti", f"tcp:{debug_port}"],
-            capture_output=True, text=True, timeout=3,
+            capture_output=True,
+            text=True,
+            timeout=3,
         )
         pids = [p.strip() for p in result.stdout.splitlines() if p.strip()]
         for pid in pids:
@@ -66,7 +69,9 @@ def _kill_existing_debug_chrome() -> None:
         try:
             result = subprocess.run(
                 ["pgrep", "-f", chrome_binary],
-                capture_output=True, text=True, timeout=3,
+                capture_output=True,
+                text=True,
+                timeout=3,
             )
             pids = [p.strip() for p in result.stdout.splitlines() if p.strip()]
             for pid in pids:
@@ -87,7 +92,9 @@ def _kill_existing_debug_chrome_windows() -> None:
     try:
         result = subprocess.run(
             ["netstat", "-ano", "-p", "TCP"],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         for line in result.stdout.splitlines():
             if f":{debug_port}" in line and "LISTENING" in line:

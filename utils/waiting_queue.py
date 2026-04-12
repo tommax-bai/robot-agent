@@ -6,6 +6,7 @@
 - get/remove 不存在时返回 None，调用方无需 try/except
 - 不打印 result 内容到日志（可能含敏感信息如验证码）
 """
+
 from __future__ import annotations
 
 import threading

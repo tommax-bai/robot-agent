@@ -1,13 +1,18 @@
 """
 任务历史记录模块：负责初始化任务的 trace 文件和索引。
 """
+
 from __future__ import annotations
 
-import os
 import json
-import yaml
 from datetime import datetime
+from pathlib import Path
+
+import yaml
+
 import utils.logger as logger
+
+_HISTORY_ROOT = Path("history")
 
 
 def init_history(trace_id: str, user_goal: str):
@@ -16,26 +21,17 @@ def init_history(trace_id: str, user_goal: str):
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
         # 1. 写入 index.jsonl (索引)
-        history_index_path = "history/index.jsonl"
-        if not os.path.exists("history"):
-            os.makedirs("history")
+        _HISTORY_ROOT.mkdir(parents=True, exist_ok=True)
+        index_path = _HISTORY_ROOT / "index.jsonl"
         entry = {"dt": now, "trace_id": trace_id}
-        with open(history_index_path, "a", encoding="utf-8") as f:
+        with index_path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
         # 2. 创建 trace_id.md 初始占位
-        md_path = f"history/{trace_id}.md"
-        meta = {
-            "trace_id": trace_id,
-            "created_at": now,
-            "goal": user_goal,
-            "status": "running"
-        }
+        md_path = _HISTORY_ROOT / f"{trace_id}.md"
+        meta = {"trace_id": trace_id, "created_at": now, "goal": user_goal, "status": "running"}
         yaml_content = yaml.dump(meta, allow_unicode=True, sort_keys=False)
-        content = f"---\n{yaml_content}---\n\n# Task History: {trace_id}\n"
-
-        with open(md_path, "w", encoding="utf-8") as f:
-            f.write(content)
+        md_path.write_text(f"---\n{yaml_content}---\n\n# Task History: {trace_id}\n", encoding="utf-8")
 
     except Exception as e:
         logger.error({"msg": "初始化历史记录失败", "error": str(e)})

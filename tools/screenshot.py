@@ -7,33 +7,33 @@
 - 可选持久化保存到本地
 - 支持 Retina 屏幕缩放适配
 """
+
 from __future__ import annotations
 
-import utils.logger as logger
-
+import argparse
+import base64
 import os
 import time
-import config
-import base64
-import argparse
 from io import BytesIO
+
 import pyautogui
 import pywinctl
+from PIL import Image, ImageDraw, ImageEnhance, ImageGrab, ImageOps
 
-from PIL import ImageDraw, Image
-from PIL import ImageEnhance
-from PIL import ImageOps
-from PIL import ImageGrab
+import config
+import utils.logger as logger
 
 
-def get_screenshot_base64(trace_id: str, include_cursor: bool = False, shot_window: str = "小红书|Chrome") -> tuple[str, int, int]:
+def get_screenshot_base64(
+    trace_id: str, include_cursor: bool = False, shot_window: str = "小红书|Chrome"
+) -> tuple[str, int, int]:
     """
     截取当前屏幕并返回 base64 编码的图像数据
-    
+
     Args:
         trace_id: 追踪 ID，用于日志记录和文件保存路径
         include_cursor: 是否在截图上标记鼠标位置（红色十字）
-    
+
     Returns:
         tuple: (base64 编码的图像, 鼠标 x 坐标, 鼠标 y 坐标)
                如果 include_cursor=False，坐标返回 0
@@ -60,6 +60,7 @@ def get_screenshot_base64(trace_id: str, include_cursor: bool = False, shot_wind
     target_bounds = None
     try:
         from utils.init_functions.init_chrome_client import get_chrome
+
         target_bounds = get_chrome().get_window_bounds()
     except Exception:
         target_bounds = None
@@ -81,12 +82,14 @@ def get_screenshot_base64(trace_id: str, include_cursor: bool = False, shot_wind
         if best is not None and best_dist is not None and best_dist <= 20:
             window = best
         else:
-            logger.warning({
-                "msg": "未能通过 CDP bounds 定位本项目 Chrome 窗口，回退到标题首匹配",
-                "target_bounds": target_bounds,
-                "candidates": [(w.title, w.left, w.top) for w in candidates],
-                "trace_id": trace_id,
-            })
+            logger.warning(
+                {
+                    "msg": "未能通过 CDP bounds 定位本项目 Chrome 窗口，回退到标题首匹配",
+                    "target_bounds": target_bounds,
+                    "candidates": [(w.title, w.left, w.top) for w in candidates],
+                    "trace_id": trace_id,
+                }
+            )
 
     if window is None:
         window = candidates[0]
@@ -94,7 +97,7 @@ def get_screenshot_base64(trace_id: str, include_cursor: bool = False, shot_wind
     window.activate()
 
     # 截取屏幕
-    #screen_img = pyautogui.screenshot()
+    # screen_img = pyautogui.screenshot()
     screen_img = ImageGrab.grab(bbox=(window.left, window.top, window.right, window.bottom))
 
     # 图片质量压缩，提升LLM处理效率
@@ -108,21 +111,22 @@ def get_screenshot_base64(trace_id: str, include_cursor: bool = False, shot_wind
 
     # 如果需要标记鼠标位置，在截图上画红色十字
     if include_cursor:
-       mouse_x_scaled, mouse_y_scaled = _draw_mouse_cursor(screen_img, window)
-    
+        mouse_x_scaled, mouse_y_scaled = _draw_mouse_cursor(screen_img, window)
+
     # 如果配置了持久化保存，将截图保存到本地
     if config.system["screenshot"]["persist"]:
         save_dir = config.system["screenshot"]["save_dir"]
         full_path = os.path.join(save_dir, trace_id)
         os.makedirs(full_path, exist_ok=True)
         screen_img.save(os.path.join(full_path, f"screenshot_{time.time()}.jpeg"))
-    
+
     # 将图像转换为 base64 编码
     buffered = BytesIO()
     screen_img.save(buffered, format="JPEG", quality=75)
-    img_base64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
-    
+    img_base64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
+
     from tools import screen as screen_tool
+
     screen_tool.update_window(
         x=window.left,
         y=window.top,
@@ -130,18 +134,20 @@ def get_screenshot_base64(trace_id: str, include_cursor: bool = False, shot_wind
         h=window.bottom - window.top,
     )
 
-    logger.info({
-        "msg": f"截图成功, 鼠标位置: {mouse_x_scaled}, {mouse_y_scaled}, 窗口信息 {screen_tool.get_window()}",
-        "trace_id": trace_id,
-    })
+    logger.info(
+        {
+            "msg": f"截图成功, 鼠标位置: {mouse_x_scaled}, {mouse_y_scaled}, 窗口信息 {screen_tool.get_window()}",
+            "trace_id": trace_id,
+        }
+    )
 
     return img_base64, mouse_x_scaled, mouse_y_scaled
 
 
-def _draw_mouse_cursor(screen_img: Image, window) -> tuple[int, int] :
+def _draw_mouse_cursor(screen_img: Image, window) -> tuple[int, int]:
     # 获取缩放比例（Retina 屏幕为 2.0，普通屏幕为 1.0）
     scale = config.system["screen_size"]["scale"]
-    
+
     # 获取鼠标逻辑坐标并转换为物理像素坐标
     draw = ImageDraw.Draw(screen_img)
     mouse_x, mouse_y = pyautogui.position()
@@ -150,23 +156,24 @@ def _draw_mouse_cursor(screen_img: Image, window) -> tuple[int, int] :
 
     # 十字标记样式配置
     cross_color = "red"
-    cross_width = int(4 * scale)    # 线宽随缩放比例调整
+    cross_width = int(4 * scale)  # 线宽随缩放比例调整
     cross_length = int(20 * scale)  # 线长随缩放比例调整
-    
+
     # 绘制水平线
     draw.line(
-        [(mouse_x_scaled - cross_length, mouse_y_scaled), 
-            (mouse_x_scaled + cross_length, mouse_y_scaled)],
-        fill=cross_color, width=cross_width
+        [(mouse_x_scaled - cross_length, mouse_y_scaled), (mouse_x_scaled + cross_length, mouse_y_scaled)],
+        fill=cross_color,
+        width=cross_width,
     )
     # 绘制垂直线
     draw.line(
-        [(mouse_x_scaled, mouse_y_scaled - cross_length), 
-            (mouse_x_scaled, mouse_y_scaled + cross_length)],
-        fill=cross_color, width=cross_width
+        [(mouse_x_scaled, mouse_y_scaled - cross_length), (mouse_x_scaled, mouse_y_scaled + cross_length)],
+        fill=cross_color,
+        width=cross_width,
     )
 
     return mouse_x, mouse_y
+
 
 def _debug_main():
     parser = argparse.ArgumentParser(description="Capture a screenshot for debugging")

@@ -2,14 +2,16 @@
 共享 LLM 调用模块：统一封装 LLM 请求、重试逻辑和 Token 记录。
 所有 agent（operator、planner、strategist）统一使用此模块。
 """
+
 from __future__ import annotations
 
 import time
-import utils.logger as logger
+
+import config
 import utils.llm_client as llm_client
+import utils.logger as logger
 from utils.json_utils import extract_json
 from utils.token_logger import log_token_usage
-import config
 
 
 def call_llm(
@@ -17,14 +19,20 @@ def call_llm(
     model: str,
     client_name: str,
     trace_id: str = "system",
-    **kwargs
+    **kwargs,
 ) -> tuple[dict, str]:
     """
     统一 LLM 调用（JSON 模式），包含重试逻辑和 Token 记录。
     返回 (parsed_json, raw_text)
     """
-    raw = _call_llm_raw(messages, model, client_name, trace_id,
-                        response_format={"type": "json_object"}, **kwargs)
+    raw = _call_llm_raw(
+        messages,
+        model,
+        client_name,
+        trace_id,
+        response_format={"type": "json_object"},
+        **kwargs,
+    )
     return extract_json(raw), raw
 
 
@@ -33,7 +41,7 @@ def call_llm_text(
     model: str,
     client_name: str,
     trace_id: str = "system",
-    **kwargs
+    **kwargs,
 ) -> str:
     """
     统一 LLM 调用（纯文本模式），包含重试逻辑和 Token 记录。
@@ -59,7 +67,7 @@ def call_llm_with_template(meta: dict, prompt: str, default_temperature: float =
         model=model_name,
         client_name=client_name,
         temperature=temperature,
-        **extra_params
+        **extra_params,
     )
 
 
@@ -68,8 +76,8 @@ def _call_llm_raw(
     model: str,
     client_name: str,
     trace_id: str = "system",
-    response_format: dict = None,
-    **kwargs
+    response_format: dict | None = None,
+    **kwargs,
 ) -> str:
     """
     底层 LLM 调用：重试 + Token 记录，返回原始文本。
@@ -101,20 +109,23 @@ def _call_llm_raw(
                     trace_id=trace_id,
                     model=model,
                     prompt_tokens=usage.prompt_tokens,
-                    completion_tokens=usage.completion_tokens
+                    completion_tokens=usage.completion_tokens,
                 )
 
             return (response.choices[0].message.content or "").strip()
 
         except Exception as e:
             if attempt < max_retries - 1:
-                logger.warning({
-                    "msg": f"LLM 调用失败，正在进行第 {attempt + 1} 次重试",
-                    "error": str(e),
-                    "retry_delay": retry_delay
-                }, trace_id)
+                logger.warning(
+                    {
+                        "msg": f"LLM 调用失败，正在进行第 {attempt + 1} 次重试",
+                        "error": str(e),
+                        "retry_delay": retry_delay,
+                    },
+                    trace_id,
+                )
                 time.sleep(retry_delay)
                 continue
-            else:
-                logger.error({"msg": "LLM 调用多次重试后依然失败", "error": str(e)}, trace_id)
-                raise e
+
+            logger.error({"msg": "LLM 调用多次重试后依然失败", "error": str(e)}, trace_id)
+            raise

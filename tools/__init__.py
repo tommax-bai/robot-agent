@@ -6,4 +6,5 @@ Tools 层：Agent 的环境交互能力。
 - screen: 坐标系转换（LLM 0-1000 → 物理像素）
 - llm_caller: LLM 统一调用接口
 """
+
 from __future__ import annotations

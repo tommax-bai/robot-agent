@@ -16,6 +16,7 @@ ActionDispatcher: 动作分发器。
 - CancelledError → 必须 raise 透传，是任务取消信号
 - 其他 Exception → 转 ActionResult.failure（动作执行可能临时失败，让 LLM 看到错误自适应）
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -48,9 +49,7 @@ class ActionDispatcher:
 
             if action.method == "finish":
                 summary = action.params.get("summary", "")
-                results.append(
-                    ActionResult(method="finish", ok=True, message="task finished", payload=summary)
-                )
+                results.append(ActionResult(method="finish", ok=True, message="task finished", payload=summary))
                 return ActionOutcome.finished(summary, results)
 
             if self._skills.has_tool(action.method):

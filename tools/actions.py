@@ -1,12 +1,14 @@
 from __future__ import annotations
 
-from tools.screen import llm_to_screen
+import math
+import random
+import time
+
 import pyautogui
 import pyperclip
+
 import config
-import time
-import random
-import math
+from tools.screen import llm_to_screen
 
 # 禁用 PyAutoGUI 的故障保护（FAILSAFE），防止在 macOS 上因鼠标在角落而导致任务中断。
 pyautogui.FAILSAFE = False
@@ -15,6 +17,7 @@ pyautogui.FAILSAFE = False
 # ═══════════════════════════════════════════════════════
 # 拟人化基础工具
 # ═══════════════════════════════════════════════════════
+
 
 def _human_move(x, y):
     """
@@ -41,8 +44,8 @@ def _human_move(x, y):
         # 缓入缓出：ease-in-out
         t_ease = t * t * (3 - 2 * t)
         # 二次贝塞尔曲线
-        bx = (1 - t_ease) ** 2 * cx + 2 * (1 - t_ease) * t_ease * mid_x + t_ease ** 2 * x
-        by = (1 - t_ease) ** 2 * cy + 2 * (1 - t_ease) * t_ease * mid_y + t_ease ** 2 * y
+        bx = (1 - t_ease) ** 2 * cx + 2 * (1 - t_ease) * t_ease * mid_x + t_ease**2 * x
+        by = (1 - t_ease) ** 2 * cy + 2 * (1 - t_ease) * t_ease * mid_y + t_ease**2 * y
         pyautogui.moveTo(bx, by)
         time.sleep(duration / steps)
 
@@ -69,26 +72,21 @@ def _post_action_pause():
 # 动作执行入口
 # ═══════════════════════════════════════════════════════
 
+
 def execute_action(trace_id: str, data: dict) -> dict:
-    from utils import logger
     import json
+
+    from utils import logger
 
     method = data.get("method", None)
     params = data.get("params", {})
 
-    logger.info({
-        "msg": "执行器收到动作指令",
-        "method": method,
-        "params_raw": json.dumps(params, ensure_ascii=False)
-    }, trace_id)
+    logger.info(
+        {"msg": "执行器收到动作指令", "method": method, "params_raw": json.dumps(params, ensure_ascii=False)}, trace_id
+    )
 
     if not method:
-        return {
-            "ok": False,
-            "message": "没有拿到有效的 action",
-            "error": "missing action field",
-            "finish": False
-        }
+        return {"ok": False, "message": "没有拿到有效的 action", "error": "missing action field", "finish": False}
 
     finish = bool(data.get("finish", False))
 
@@ -113,7 +111,12 @@ def execute_action(trace_id: str, data: dict) -> dict:
             case "hotkey":
                 return _human_hotkey(params, finish, trace_id)
             case _:
-                return {"ok": False, "message": f"不支持的动作: {method}", "error": "unsupported action", "finish": finish}
+                return {
+                    "ok": False,
+                    "message": f"不支持的动作: {method}",
+                    "error": "unsupported action",
+                    "finish": finish,
+                }
 
     except Exception as e:
         logger.error({"msg": f"执行器内部报错: {method}", "error": str(e), "params": params}, trace_id)
@@ -123,6 +126,7 @@ def execute_action(trace_id: str, data: dict) -> dict:
 # ═══════════════════════════════════════════════════════
 # 各动作的拟人化实现
 # ═══════════════════════════════════════════════════════
+
 
 def _human_click(params, finish, trace_id):
     """拟人化单击：曲线移动 → 微停顿 → 点击（带微偏移） → 短暂观察"""
@@ -142,7 +146,7 @@ def _human_click(params, finish, trace_id):
     pyautogui.click()
     _post_action_pause()
 
-    return {"ok": True, "message": f"点击操作已执行 ({x}, {y})", "finish": finish}
+    return {"ok": True, "message": f"已尝试点击操作 ({x}, {y})", "finish": finish}
 
 
 def _human_dblclick(params, finish, trace_id):
@@ -161,7 +165,7 @@ def _human_dblclick(params, finish, trace_id):
     pyautogui.click()
     _post_action_pause()
 
-    return {"ok": True, "message": f"双击操作已执行 ({x}, {y})", "finish": finish}
+    return {"ok": True, "message": f"已尝试双击操作 ({x}, {y})", "finish": finish}
 
 
 def _human_move_action(params, finish, trace_id):
@@ -177,7 +181,7 @@ def _human_move_action(params, finish, trace_id):
     # 移到目标后短暂悬停，模拟人在看悬浮提示
     time.sleep(random.uniform(0.1, 0.3))
 
-    return {"ok": True, "message": f"移动操作已执行 ({x}, {y})", "finish": finish}
+    return {"ok": True, "message": f"已尝试移动操作 ({x}, {y})", "finish": finish}
 
 
 def _human_scroll(params, finish, trace_id):
@@ -219,7 +223,11 @@ def _human_scroll(params, finish, trace_id):
         else:
             time.sleep(random.uniform(0.04, 0.1))
 
-    return {"ok": True, "message": f"滚动操作已执行 (方向:{'上' if clicks > 0 else '下'}, 强度:{abs(clicks)})", "finish": finish}
+    return {
+        "ok": True,
+        "message": f"滚动操作已执行 (方向:{'上' if clicks > 0 else '下'}, 强度:{abs(clicks)})",
+        "finish": finish,
+    }
 
 
 def _human_drag_action(params, finish, trace_id):
@@ -231,7 +239,7 @@ def _human_drag_action(params, finish, trace_id):
     sx1, sy1 = llm_to_screen(x1, y1)
     sx2, sy2 = llm_to_screen(x2, y2)
     _human_drag(sx1, sy1, sx2, sy2)
-    return {"ok": True, "message": "拖动操作已执行", "finish": finish}
+    return {"ok": True, "message": "已尝试拖动操作", "finish": finish}
 
 
 def _human_paste(params, finish, trace_id):
@@ -242,11 +250,11 @@ def _human_paste(params, finish, trace_id):
     _pre_action_pause()
     platform = config.system["system_info"]
     modifier = "command" if platform == "darwin" else "ctrl"
-    pyautogui.hotkey(modifier, 'v')
+    pyautogui.hotkey(modifier, "v")
     # 粘贴后等内容渲染
     time.sleep(random.uniform(0.1, 0.3))
 
-    return {"ok": True, "message": "粘贴操作已执行", "finish": finish}
+    return {"ok": True, "message": "已尝试粘贴操作", "finish": finish}
 
 
 def _human_copy(params, finish, trace_id):
@@ -254,7 +262,7 @@ def _human_copy(params, finish, trace_id):
     text = get_param(params, "text", "")
     pyperclip.copy(text)
     time.sleep(random.uniform(0.03, 0.08))
-    return {"ok": True, "message": "复制操作已执行", "finish": finish}
+    return {"ok": True, "message": "已尝试复制操作", "finish": finish}
 
 
 def _human_wait(params, finish, trace_id):
@@ -263,7 +271,7 @@ def _human_wait(params, finish, trace_id):
     jitter = ms * random.uniform(-0.1, 0.1)
     actual_ms = max(ms + jitter, 0)
     time.sleep(actual_ms / 1000.0)
-    return {"ok": True, "message": f"等待操作已执行 ({actual_ms:.0f}ms)", "finish": finish}
+    return {"ok": True, "message": f"已尝试等待操作 ({actual_ms:.0f}ms)", "finish": finish}
 
 
 def _human_hotkey(params, finish, trace_id):
@@ -284,12 +292,13 @@ def _human_hotkey(params, finish, trace_id):
         time.sleep(random.uniform(0.01, 0.04))
     _post_action_pause()
 
-    return {"ok": True, "message": "快捷键操作已执行", "finish": finish}
+    return {"ok": True, "message": "已尝试快捷键操作", "finish": finish}
 
 
 # ═══════════════════════════════════════════════════════
 # 参数获取 & 拖拽底层实现
 # ═══════════════════════════════════════════════════════
+
 
 def get_param(params: dict, key: str, default=None):
     """
@@ -307,7 +316,7 @@ def get_param(params: dict, key: str, default=None):
         f'"{key}"',
         f"'{key}'",
         f'\\"{key}\\"',
-        f' {key} ',
+        f" {key} ",
     ]
     for v in variants:
         if v in params:

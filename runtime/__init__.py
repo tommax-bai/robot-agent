@@ -1,3 +1,3 @@
-"""Runtime state package."""
-from __future__ import annotations
+"""运行时状态包：CancelToken, RunContext, ConversationHistory。"""
 
+from __future__ import annotations

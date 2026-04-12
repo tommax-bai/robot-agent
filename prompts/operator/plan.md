@@ -11,10 +11,17 @@
 ## 可用技能清单:
 {SKILL_MANIFEST}
 
+## Intent 标签 (重要):
+每个子任务必须指定一个 `intent` 标签，用于标识该子任务的语义意图。**必须优先从下方已知列表中选择**；仅当确实无法匹配时才新建（使用英文 snake_case）。
+
+已知 intent 列表：
+{INTENT_CANDIDATES}
+
 ## 输出要求:
 你必须输出一个 JSON 对象，包含 `tasks` 列表。每个子任务包含：
 - `sub_goal`: 该阶段的具体目标描述。
 - `required_skill`: 执行该任务所需的技能名称（必须从清单中选择，如果没有匹配的则置 null）。
+- `intent`: 子任务的语义意图标签（必须优先从已知 intent 列表中选择）。
 
 ## 用户目标:
 {USER_GOAL}
@@ -22,7 +29,7 @@
 ## 示例输出:
 {{
     "tasks": [
-        {{"sub_goal": "确保小红书已登录", "required_skill": "rednote-auth"}},
-        {{"sub_goal": "发布一篇关于 AI 标注岗位的笔记并暂存", "required_skill": "rednote-publish"}}
+        {{"sub_goal": "确保小红书已登录", "required_skill": "rednote-auth", "intent": "login_check"}},
+        {{"sub_goal": "搜索AI标注相关内容并收割笔记", "required_skill": "rednote-explorer", "intent": "search_and_harvest"}}
     ]
 }}

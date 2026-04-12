@@ -2,11 +2,13 @@
 Planner Agent：任务分解。
 
 设计原则：
-- 依赖（LlmTool, SkillRegistry）通过构造注入
+- 依赖（LlmTool, SkillRegistry, IntentRegistry）通过构造注入
 - 返回 Plan dataclass，不再 list[dict]
 - 失败抛 PlannerError，不返回单任务兜底
 - skill 过滤在 planner 内部完成，不在 operator
+- intent 通过 IntentRegistry 归一化，保证与 Recipe 端标签一致
 """
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -19,14 +21,16 @@ from utils.prompt_template import load_prompt_template
 
 if TYPE_CHECKING:
     from runtime.context import RunContext
+    from services.intent_registry import IntentRegistry
     from services.skill_registry import SkillRegistry
 
 
 class Planner:
     name = "planner"
 
-    def __init__(self, skills: SkillRegistry):
+    def __init__(self, skills: SkillRegistry, intents: IntentRegistry):
         self._skills = skills
+        self._intents = intents
         cfg = config.agent["planner"]
         self._model = cfg["model"]
         self._client = cfg["llm_client"]
@@ -36,14 +40,14 @@ class Planner:
     def generate_plan(self, ctx: RunContext, user_goal: str) -> Plan:
         """调用 LLM 生成任务规划。失败抛 PlannerError。"""
         skill_list = self._skills.get_all()
-        skills_manifest = "".join(
-            f"- {m.name}: {m.description}\n" for m in skill_list
-        )
+        skills_manifest = "".join(f"- {m.name}: {m.description}\n" for m in skill_list)
+        intent_candidates = self._intents.format_for_prompt()
         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
         _, body = load_prompt_template("prompts/operator/plan.md")
         prompt = body.format(
             SKILL_MANIFEST=skills_manifest,
+            INTENT_CANDIDATES=intent_candidates,
             USER_GOAL=user_goal,
             CURRENT_TIME=current_time,
         )
@@ -73,11 +77,27 @@ class Planner:
             skill = t.get("required_skill") if isinstance(t, dict) else None
             # planner 输出了不可用的 skill，直接降级为 None（不报错，让 operator 视觉走）
             if skill and self._skills.get(skill) is None:
-                logger.warning({
-                    "msg": "planner 返回了不可用的 skill，已降级",
-                    "skill": skill,
-                }, ctx.trace_id)
+                logger.warning(
+                    {
+                        "msg": "planner 返回了不可用的 skill，已降级",
+                        "skill": skill,
+                    },
+                    ctx.trace_id,
+                )
                 skill = None
-            subtasks.append(SubTask(id=f"sub-{i}", goal=sub_goal, required_skill=skill))
+
+            raw_intent = t.get("intent", "") if isinstance(t, dict) else ""
+            intent = self._intents.resolve(raw_intent)
+            if intent != raw_intent and raw_intent:
+                logger.info(
+                    {
+                        "msg": "planner intent 已归一化",
+                        "raw": raw_intent,
+                        "resolved": intent,
+                    },
+                    ctx.trace_id,
+                )
+
+            subtasks.append(SubTask(id=f"sub-{i}", goal=sub_goal, required_skill=skill, intent=intent))
 
         return Plan(subtasks=subtasks)

@@ -12,6 +12,7 @@ Strategist: 内容策略服务。
 - 副作用（写 state）由调用方决定，不藏在 brainstorm 内部
 - 失败抛 StrategistError，绝不返回业务话术兜底
 """
+
 from __future__ import annotations
 
 import os
@@ -96,8 +97,8 @@ class Strategist:
             persona_character=self._persona_character(),
             current_time_str=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             total_knowledge=evolution.total_knowledge,
-            home_weight_pct=f"{evolution.home_weight*100:.0f}",
-            search_weight_pct=f"{evolution.search_weight*100:.0f}",
+            home_weight_pct=f"{evolution.home_weight * 100:.0f}",
+            search_weight_pct=f"{evolution.search_weight * 100:.0f}",
             focus_desc="【首页沉浸】" if is_home_focus else "【主动探索】",
             search_keyword=random.choice(brainstorm.topics),
             mood=snapshot["mood"],
@@ -119,8 +120,7 @@ class Strategist:
         snapshot = self._state.get()
         title_few_shots = snapshot["title_few_shots"][-10:]
         title_few_shots_str = (
-            "\n".join(f"- {t}" for t in title_few_shots)
-            if title_few_shots else "（暂无样本，请自由发挥）"
+            "\n".join(f"- {t}" for t in title_few_shots) if title_few_shots else "（暂无样本，请自由发挥）"
         )
 
         return self._render_and_call(
@@ -131,7 +131,7 @@ class Strategist:
             persona_style=self._persona_style(),
             core_strategy=self._core_strategy(),
             topic=topic,
-            recruitment_info=config.agent["maintenance"]["recruitment_info"],
+            recruitment_info=config.agent["persona"]["recruitment_info"],
             title_few_shots=title_few_shots_str,
             last_discovery=snapshot["last_discovery"] or "（暂无近期收割内容）",
             default_temperature=0.8,
@@ -163,16 +163,16 @@ class Strategist:
             raise StrategistError(f"render_and_call({template}) failed: {e}") from e
 
     def _persona_name(self) -> str:
-        return config.agent["maintenance"]["persona"]["name"]
+        return config.agent["persona"]["name"]
 
     def _persona_character(self) -> str:
-        return config.agent["maintenance"]["persona"]["character"]
+        return config.agent["persona"]["character"]
 
     def _persona_style(self) -> str:
-        return config.agent["maintenance"]["persona"]["style"]
+        return config.agent["persona"]["style"]
 
     def _core_strategy(self) -> str:
-        return config.agent["maintenance"]["core_strategy"]
+        return config.agent["persona"]["strategy"]
 
     def _time_context(self) -> str:
         now = datetime.now()

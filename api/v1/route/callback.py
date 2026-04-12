@@ -1,15 +1,11 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Body
-import uuid
-import asyncio
-from dto.agent import AgentRequest
-import utils.logger as logger
-from dto.callback import DTOCallbackResultRequest
+from fastapi import APIRouter
+
 import utils.waiting_queue as waiting_queue
+from dto.callback import DTOCallbackResultRequest
 
 router = APIRouter()
-
 
 
 @router.post("/callback/result")

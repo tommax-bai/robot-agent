@@ -1,3 +1,11 @@
+## 文档入口
+
+- 新人架构说明：`docs/architecture_onboarding.md`
+- 开发规范：`docs/development_guide.md`
+- AI 助手协作说明：`CLAUDE.md`
+
+## 本地环境
+
 VERSION="145.0.7632.76"
 PLATFORM="mac-arm64"
 

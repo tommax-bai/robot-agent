@@ -9,18 +9,21 @@ SubtaskRunner / VisionActionStep。
 - 不再 import supervisor 检查 abort —— 使用 ctx.cancel
 - 不再创建 SkillRegistry / Planner —— 由 container 在启动时构造
 """
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
 import utils.logger as logger
-from agents.base import Task, TaskResult, AgentError
+from agents.base import AgentError, Task, TaskResult
 from services.history import init_history
 
 if TYPE_CHECKING:
     from agents.operator.subtask_runner import SubtaskRunner
     from agents.planner.planner import Planner
     from runtime.context import RunContext
+
+
 class Operator:
     name = "operator"
 
@@ -38,8 +41,12 @@ class Operator:
             logger.error({"msg": "任务规划失败", "error": str(e)}, ctx.trace_id)
             return TaskResult.failure(e)
 
+        plan_detail = " → ".join(
+            f"[{s.id}] {s.goal}" + (f" ({s.required_skill}, {s.intent})" if s.required_skill else f" ({s.intent})")
+            for s in plan.subtasks
+        )
         logger.info(
-            {"msg": "规划完成", "subtask_count": len(plan.subtasks)},
+            {"msg": f"规划完成 ({len(plan.subtasks)} 步)", "plan": plan_detail},
             ctx.trace_id,
         )
 
@@ -49,9 +56,10 @@ class Operator:
 
             logger.info(
                 {
-                    "msg": f"执行子任务 {i+1}/{len(plan.subtasks)}",
+                    "msg": f"▶ 子任务 {i + 1}/{len(plan.subtasks)}",
                     "sub_goal": subtask.goal,
-                    "skill": subtask.required_skill,
+                    "skill": subtask.required_skill or "(视觉通用)",
+                    "intent": subtask.intent,
                 },
                 ctx.trace_id,
             )

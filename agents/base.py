@@ -2,10 +2,14 @@
 Agent 框架基础类型：Task, TaskResult, SubTask, Plan, AgentError 体系。
 所有 agent 共享同一套数据形态。
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Literal, Protocol
+from typing import TYPE_CHECKING, Any, Literal, Protocol
+
+if TYPE_CHECKING:
+    from runtime.context import RunContext
 
 
 # ═══════════════════════════════════════════════════════
@@ -18,6 +22,7 @@ TaskKind = Literal["patrol", "post", "dm", "cr", "user_goal"]
 @dataclass(frozen=True)
 class Task:
     """顶层任务输入"""
+
     kind: TaskKind
     goal: str
 
@@ -25,20 +30,24 @@ class Task:
 @dataclass(frozen=True)
 class SubTask:
     """Planner 拆解后的单个子任务"""
+
     id: str
     goal: str
     required_skill: str | None = None
+    intent: str = "unknown"
 
 
 @dataclass(frozen=True)
 class Plan:
     """Planner 输出的执行计划"""
+
     subtasks: list[SubTask]
 
 
 @dataclass(frozen=True)
 class TaskResult:
     """统一的任务结果，支持嵌套聚合"""
+
     ok: bool
     summary: str = ""
     sub_results: list[TaskResult] = field(default_factory=list)
@@ -64,8 +73,10 @@ class TaskResult:
 # 错误体系
 # ═══════════════════════════════════════════════════════
 
+
 class AgentError(Exception):
     """所有 agent 框架异常的基类"""
+
     code: str = "agent_error"
     recoverable: bool = False
 
@@ -99,12 +110,14 @@ class StrategistError(AgentError):
 
 class StepBudgetExceededError(AgentError):
     """子任务步数预算耗尽，调用方可决定是否续航"""
+
     code = "step_budget_exceeded"
     recoverable = True
 
 
 class DecisionParseError(AgentError):
     """无法从 LLM 响应解析出可执行的 Decision"""
+
     code = "decision_parse_error"
     recoverable = True
 
@@ -118,8 +131,10 @@ class ToolNotFoundError(AgentError):
 # Agent 协议
 # ═══════════════════════════════════════════════════════
 
+
 class Agent(Protocol):
     """所有 agent 实现的统一契约"""
+
     name: str
 
     async def run(self, task: Task, ctx: RunContext) -> TaskResult: ...
@@ -129,9 +144,11 @@ class Agent(Protocol):
 # Vision-Action 循环用的数据结构
 # ═══════════════════════════════════════════════════════
 
+
 @dataclass(frozen=True)
 class Observation:
     """单次观察的快照"""
+
     image_base64: str
     captured_at: str  # ISO 时间字符串
 
@@ -139,6 +156,7 @@ class Observation:
 @dataclass(frozen=True)
 class Action:
     """单个原子动作"""
+
     method: str
     params: dict[str, Any]
     delay: float | None = None
@@ -147,6 +165,7 @@ class Action:
 @dataclass(frozen=True)
 class Decision:
     """LLM 一次决策的解析结果"""
+
     thought: str
     actions: list[Action]
     raw: str  # 保留原始文本用于日志
@@ -213,6 +232,7 @@ class Decision:
 @dataclass(frozen=True)
 class ActionResult:
     """单个动作执行后的结果"""
+
     method: str
     ok: bool
     message: str = ""
@@ -222,6 +242,7 @@ class ActionResult:
 @dataclass(frozen=True)
 class ActionOutcome:
     """一拍动作执行的最终结果"""
+
     results: list[ActionResult]
     is_finish: bool = False
     summary: str = ""
@@ -233,9 +254,3 @@ class ActionOutcome:
     @classmethod
     def continuing(cls, results: list[ActionResult]) -> ActionOutcome:
         return cls(results=results, is_finish=False)
-
-
-# 避免循环 import：RunContext 在 runtime/context.py 中定义
-from typing import TYPE_CHECKING
-if TYPE_CHECKING:
-    from runtime.context import RunContext

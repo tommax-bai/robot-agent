@@ -1,10 +1,11 @@
 """
 打开小红书搜索结果页。LLM 必须显式提供 keyword，不再使用业务相关默认值。
 """
+
 from __future__ import annotations
 
-import time
 import random
+import time
 import urllib.parse
 
 import utils.logger as logger

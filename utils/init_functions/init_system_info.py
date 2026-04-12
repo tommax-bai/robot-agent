@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import sys
+
 import config
 import utils.logger as logger
+
 
 def init_system_info():
     system_info = sys.platform

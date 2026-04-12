@@ -6,6 +6,7 @@
 - 取消用 token 协作式传播（树形）
 - 对话历史是注入的对象，每个 task 一份
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -21,12 +22,14 @@ if TYPE_CHECKING:
 # 运行时上下文
 # ═══════════════════════════════════════════════════════
 
+
 @dataclass
 class RunContext:
     """
     显式传递的运行时上下文。包含 trace_id、取消令牌、状态仓储、LLM 工具。
     子 agent 调用时使用 ctx.child() 派生子上下文。
     """
+
     trace_id: str
     cancel: CancelToken
     state: AgentStateRepo
@@ -43,15 +46,18 @@ class RunContext:
             llm=self.llm,
         )
 
+
 # ═══════════════════════════════════════════════════════
 # 取消令牌
 # ═══════════════════════════════════════════════════════
+
 
 class CancelToken:
     """
     协作式取消：被调用方在合适的检查点调 raise_if_cancelled()。
     支持树形传播：父 token 取消会同步取消所有 child。
     """
+
     def __init__(self, parent: CancelToken | None = None):
         self._cancelled = False
         self._reason: str = ""
@@ -90,35 +96,44 @@ class CancelToken:
 # 对话历史
 # ═══════════════════════════════════════════════════════
 
+
 @dataclass
 class ConversationHistory:
     """
     Vision-action 循环的对话历史。
     每个子任务一份独立实例，不再依赖全局可变 dict。
     """
+
     max_rounds: int = 6
     system_message: dict[str, Any] = field(default_factory=dict)
     user_messages: list[dict[str, Any]] = field(default_factory=list)
     assistant_messages: list[dict[str, Any]] = field(default_factory=list)
+    messages: list[dict[str, Any]] = field(default_factory=list)
 
     def set_system(self, content: str) -> None:
         self.system_message = {"role": "system", "content": content}
 
     def set_user(self, content: list[dict[str, Any]]) -> None:
-        self.user_messages = [{"role": "user", "content": content}]
+        self.messages = [{"role": "user", "content": content}]
+        self.user_messages = list(self.messages)
+        self.assistant_messages = []
 
     def add_user(self, content: list[dict[str, Any]]) -> None:
-        self.user_messages.append({"role": "user", "content": content})
-        self.user_messages = self.user_messages[-self.max_rounds:]
+        self.messages.append({"role": "user", "content": content})
+        self._trim()
+        self.user_messages = [message for message in self.messages if message.get("role") == "user"]
 
     def add_assistant(self, raw: str) -> None:
-        self.assistant_messages.append({"role": "assistant", "content": raw})
-        self.assistant_messages = self.assistant_messages[-self.max_rounds:]
+        self.messages.append({"role": "assistant", "content": raw})
+        self._trim()
+        self.assistant_messages = [message for message in self.messages if message.get("role") == "assistant"]
 
     def to_messages(self) -> list[dict[str, Any]]:
         msgs: list[dict[str, Any]] = []
         if self.system_message:
             msgs.append(self.system_message)
-        msgs.extend(self.user_messages)
-        msgs.extend(self.assistant_messages)
+        msgs.extend(self.messages)
         return msgs
+
+    def _trim(self) -> None:
+        self.messages = self.messages[-self.max_rounds * 2 :]

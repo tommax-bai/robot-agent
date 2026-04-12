@@ -4,6 +4,7 @@ SubtaskRunner: 单个子任务的执行 + 续航重试。
 把"步数耗尽时是否续航"的策略从 vision_action 循环里剥离出来。
 重试条件用结构化异常 StepBudgetExceededError，不再字符串匹配。
 """
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -12,22 +13,49 @@ import utils.logger as logger
 from agents.base import StepBudgetExceededError, SubTask, TaskResult
 
 if TYPE_CHECKING:
+    from agents.operator.recipe_operator import RecipeOperator
     from agents.operator.vision_action import VisionActionStep
     from runtime.context import RunContext
+    from services.action_memory import BehaviorSummarizer
 
 
 class SubtaskRunner:
     name = "subtask_runner"
 
-    def __init__(self, vision_step: VisionActionStep, max_resumes: int = 2):
+    def __init__(
+        self,
+        vision_step: VisionActionStep,
+        recipe_operator: RecipeOperator | None = None,
+        behavior_summarizer: BehaviorSummarizer | None = None,
+        max_resumes: int = 2,
+    ):
         self._step = vision_step
+        self._recipe_operator = recipe_operator
+        self._behavior_summarizer = behavior_summarizer
         self._max_resumes = max_resumes
 
     async def run(self, subtask: SubTask, ctx: RunContext) -> TaskResult:
+        if self._recipe_operator is not None and self._recipe_operator.has_recipes:
+            attempt = await self._recipe_operator.try_run(subtask, ctx)
+            if attempt.ok and attempt.recipe is not None:
+                return TaskResult.success(attempt.recipe.summary or f"recipe {attempt.recipe.id} executed")
+            logger.info(
+                {
+                    "msg": "动作 recipe 未完成，回退 LLM 执行",
+                    "status": attempt.status,
+                    "reason": attempt.reason,
+                    "recipe_id": attempt.recipe.id if attempt.recipe else None,
+                },
+                ctx.trace_id,
+            )
+
         last_error: Exception | None = None
         for attempt in range(self._max_resumes + 1):
             try:
-                return await self._step.run(subtask, ctx)
+                result = await self._step.run(subtask, ctx)
+                if result.ok and self._behavior_summarizer is not None:
+                    self._behavior_summarizer.submit_trace(ctx.trace_id, subtask.id, subtask.intent)
+                return result
             except StepBudgetExceededError as e:
                 last_error = e
                 if attempt == self._max_resumes:
@@ -43,6 +71,7 @@ class SubtaskRunner:
                 )
         # 所有重试都失败
         from agents.base import AgentError
+
         return TaskResult.failure(
             error=last_error if isinstance(last_error, AgentError) else StepBudgetExceededError("max resumes exhausted")
         )

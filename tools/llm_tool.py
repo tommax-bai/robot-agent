@@ -7,6 +7,7 @@ LlmTool: agent 框架使用的 LLM 调用门面。
 - with_trace(trace_id) 派生绑定，让调用方少传一个参数
 - MockLlmTool 子类用于测试
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -59,9 +60,7 @@ class LlmTool:
             **kwargs,
         )
 
-    def call_with_template(
-        self, meta: dict, prompt: str, default_temperature: float = 0.9
-    ) -> str:
+    def call_with_template(self, meta: dict, prompt: str, default_temperature: float = 0.9) -> str:
         return llm_caller.call_llm_with_template(meta, prompt, default_temperature)
 
 

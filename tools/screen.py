@@ -6,11 +6,10 @@ window 状态是 screen tool 的内部状态：
 - llm_to_screen 读取做坐标转换
 不再放在 runtime/context.py 中混淆 RunContext 的角色。
 """
+
 from __future__ import annotations
 
 import config
-from utils import logger
-
 
 # 模块私有：当前 Chrome 窗口的物理位置和尺寸（由 screenshot 工具更新）
 _window: dict[str, int] = {"x": 0, "y": 0, "w": 0, "h": 0}
