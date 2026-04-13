@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from runtime.context import RunContext
     from services.action_memory import RecipeStep, RecipeStore, TraceRecorder
     from services.vision import PageContext, PageContextCache, VisualLocator
+    from tools.backends import ActionBackend
 
 
 @dataclass(frozen=True)
@@ -33,19 +34,15 @@ class RecipeOperator:
         recipes: RecipeStore,
         page_cache: PageContextCache,
         locator: VisualLocator,
+        backend: ActionBackend,
         recorder: TraceRecorder | None = None,
-        screenshot_fn=None,
     ):
         self._dispatcher = dispatcher
         self._recipes = recipes
         self._page_cache = page_cache
         self._locator = locator
+        self._backend = backend
         self._recorder = recorder
-        if screenshot_fn is None:
-            import tools.screenshot as _screenshot
-
-            screenshot_fn = _screenshot.get_screenshot_base64
-        self._screenshot_fn = screenshot_fn
 
     @property
     def has_recipes(self) -> bool:
@@ -55,7 +52,7 @@ class RecipeOperator:
         if not self._recipes.has_recipes:
             return RecipeAttempt.miss("no recipes loaded")
 
-        image_b64, _, _ = self._screenshot_fn(ctx.trace_id, include_cursor=True)
+        image_b64, _, _ = self._backend.screenshot(ctx.trace_id, include_cursor=True)
         from datetime import datetime
 
         observation = Observation(image_base64=image_b64, captured_at=datetime.now().isoformat())

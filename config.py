@@ -171,6 +171,20 @@ agent = {
         "state_file": "data/agent_state.json",
         "save_titles_to_local": True,
     },
+    # E1 - 执行运行时（决定 backend / 决策策略的组合）
+    # mode 可选：
+    #   "local_chrome"  — 本地 macOS Chrome（PyAutoGUI + 自家 VLM）
+    #   "cloud_vision"  — 阿里无影云手机 + 自家 VLM
+    #   "cloud_aliyun"  — 阿里无影云手机 + 阿里 mobile_use Agent（暂未启用）
+    "runtime": {
+        "mode": _env("AGENT_RUNTIME_MODE", "local_chrome"),
+        "agentbay": {
+            "api_key": _env("AGENTBAY_API_KEY"),
+            "image_id": _env("AGENTBAY_IMAGE_ID", "mobile_latest"),
+            # 截图压缩：jpeg 体积小，VLM 输入更省 token；png 无损但更大
+            "screenshot_format": _env("AGENTBAY_SCREENSHOT_FORMAT", "jpeg"),
+        },
+    },
 }
 
 
@@ -242,6 +256,11 @@ _REQUIRED_SCHEMA = [
     # agent.storage
     ("agent.storage.state_file", str),
     ("agent.storage.save_titles_to_local", bool),
+    # agent.runtime
+    ("agent.runtime.mode", str),
+    ("agent.runtime.agentbay.api_key", str),
+    ("agent.runtime.agentbay.image_id", str),
+    ("agent.runtime.agentbay.screenshot_format", str),
 ]
 
 

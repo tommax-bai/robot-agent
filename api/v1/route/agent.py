@@ -86,6 +86,35 @@ async def get_agent_status():
     return _supervisor().get_status()
 
 
+@router.get("/agent/runtime")
+async def get_agent_runtime():
+    """返回当前执行运行时配置：mode / backend / strategy / 云端连接状态。
+
+    用于排查"为什么我的指令落到了本地 Chrome 而不是云手机"这类问题。
+    不会触发任何云端 session 创建。
+    """
+    c = get_container()
+    runtime_cfg = config.agent["runtime"]
+    backend = c.backend
+    payload: dict = {
+        "mode": runtime_cfg["mode"],
+        "backend": type(backend).__name__,
+        "strategy": {"type": type(c.strategy).__name__, "name": c.strategy.name},
+    }
+    # AgentBay 后端额外暴露 session 是否已建立、镜像、截图格式等
+    if type(backend).__name__ == "AgentBayBackend":
+        payload["agentbay"] = {
+            "image_id": getattr(backend, "_image_id", None),
+            "screenshot_format": getattr(backend, "_screenshot_format", None),
+            "session_active": getattr(backend, "_session", None) is not None,
+            "screen_size": {
+                "width": getattr(backend, "_screen_w", 0),
+                "height": getattr(backend, "_screen_h", 0),
+            },
+        }
+    return payload
+
+
 @router.post("/agent/patrol")
 async def toggle_patrol(enable: bool = Body(..., embed=True)):
     sv = _supervisor()

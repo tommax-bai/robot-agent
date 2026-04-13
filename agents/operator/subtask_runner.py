@@ -1,8 +1,12 @@
 """
 SubtaskRunner: 单个子任务的执行 + 续航重试。
 
-把"步数耗尽时是否续航"的策略从 vision_action 循环里剥离出来。
-重试条件用结构化异常 StepBudgetExceededError，不再字符串匹配。
+执行链路：
+1. 优先走 RecipeOperator 快路径（命中即返回，跳过 LLM）
+2. 未命中则委托给注入的 SubtaskStrategy（VisionActionStep / AliyunMobileAgentStrategy / ...）
+3. Strategy 抛 StepBudgetExceededError 时按 max_resumes 续航重试
+
+Strategy 的具体实现由 mode 决定，Runner 自身不感知是哪种 mode。
 """
 
 from __future__ import annotations
@@ -14,7 +18,7 @@ from agents.base import StepBudgetExceededError, SubTask, TaskResult
 
 if TYPE_CHECKING:
     from agents.operator.recipe_operator import RecipeOperator
-    from agents.operator.vision_action import VisionActionStep
+    from agents.operator.strategy import SubtaskStrategy
     from runtime.context import RunContext
     from services.action_memory import BehaviorSummarizer
 
@@ -24,12 +28,12 @@ class SubtaskRunner:
 
     def __init__(
         self,
-        vision_step: VisionActionStep,
+        strategy: SubtaskStrategy,
         recipe_operator: RecipeOperator | None = None,
         behavior_summarizer: BehaviorSummarizer | None = None,
         max_resumes: int = 2,
     ):
-        self._step = vision_step
+        self._strategy = strategy
         self._recipe_operator = recipe_operator
         self._behavior_summarizer = behavior_summarizer
         self._max_resumes = max_resumes
@@ -41,7 +45,7 @@ class SubtaskRunner:
                 return TaskResult.success(attempt.recipe.summary or f"recipe {attempt.recipe.id} executed")
             logger.info(
                 {
-                    "msg": "动作 recipe 未完成，回退 LLM 执行",
+                    "msg": f"动作 recipe 未完成，回退 strategy={self._strategy.name}",
                     "status": attempt.status,
                     "reason": attempt.reason,
                     "recipe_id": attempt.recipe.id if attempt.recipe else None,
@@ -52,7 +56,7 @@ class SubtaskRunner:
         last_error: Exception | None = None
         for attempt in range(self._max_resumes + 1):
             try:
-                result = await self._step.run(subtask, ctx)
+                result = await self._strategy.run(subtask, ctx)
                 if result.ok and self._behavior_summarizer is not None:
                     self._behavior_summarizer.submit_trace(ctx.trace_id, subtask.id, subtask.intent)
                 return result

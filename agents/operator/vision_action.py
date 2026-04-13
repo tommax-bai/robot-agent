@@ -41,6 +41,7 @@ if TYPE_CHECKING:
     from services.action_memory import TraceRecorder
     from services.skill_registry import SkillRegistry
     from services.vision import PageContextCache
+    from tools.backends import ActionBackend
 
 
 class VisionActionStep:
@@ -50,20 +51,15 @@ class VisionActionStep:
         self,
         skills: SkillRegistry,
         dispatcher: ActionDispatcher,
+        backend: ActionBackend,
         recorder: TraceRecorder | None = None,
         page_cache: PageContextCache | None = None,
-        screenshot_fn=None,
     ):
         self._skills = skills
         self._dispatcher = dispatcher
+        self._backend = backend
         self._recorder = recorder
         self._page_cache = page_cache
-        # 截屏函数可注入用于测试；默认使用 tools.screenshot
-        if screenshot_fn is None:
-            import tools.screenshot as _screenshot
-
-            screenshot_fn = _screenshot.get_screenshot_base64
-        self._screenshot_fn = screenshot_fn
         cfg = config.agent["operator"]
         self._model = cfg["model"]
         self._client = cfg["llm_client"]
@@ -169,7 +165,7 @@ class VisionActionStep:
         return "\n".join([action_section, common_rules_body, skill_section, constraint_section])
 
     def _observe(self, ctx: RunContext) -> Observation:
-        image_b64, _, _ = self._screenshot_fn(ctx.trace_id, include_cursor=True)
+        image_b64, _, _ = self._backend.screenshot(ctx.trace_id, include_cursor=True)
         return Observation(image_base64=image_b64, captured_at=datetime.now().isoformat())
 
     def _think(

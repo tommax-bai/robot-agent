@@ -4,20 +4,28 @@
 
 ## 1. 项目一句话
 
-这是一个基于视觉语言模型的 GUI Agent：它根据目标生成计划，截图理解当前页面，用 PyAutoGUI 操作浏览器，再截图再操作，当前主要面向小红书内容探索、互动和发布场景。
+这是一个基于视觉语言模型的 GUI Agent：它根据目标生成计划，截图理解当前页面，把动作分发给可插拔的执行后端（本地 Chrome 或阿里无影云手机），再截图再操作，当前主要面向小红书内容探索、互动和发布场景。
 
 核心闭环：
 
 ```text
 目标
   -> Planner 拆子任务
-  -> 截图 Observation
+  -> 截图 Observation（Backend.screenshot）
   -> LLM 生成 Decision
   -> ActionDispatcher 分发动作
-  -> PyAutoGUI / Skill 执行
+  -> Backend.execute_action / Skill 执行
   -> 再截图验证
   -> finish 或继续
 ```
+
+通过 `agent.runtime.mode` 在三种执行模式间切换：
+
+| mode | Backend（执行环境） | Strategy（决策方式） |
+|------|--------------------|---------------------|
+| `local_chrome`（默认） | `MacOSChromeBackend`：PyAutoGUI + ImageGrab | `VisionActionStep`：自家 VLM |
+| `cloud_vision` | `AgentBayBackend`：阿里无影云手机 | `VisionActionStep`：同上 |
+| `cloud_aliyun` | `AgentBayBackend`（共享 session） | `AliyunMobileAgentStrategy`：委托给阿里 mobile_use Agent |
 
 现在项目还加入了“可重复动作快路径”：
 
@@ -95,9 +103,11 @@ gunicorn -w 1 -k uvicorn.workers.UvicornWorker app:app -b 0.0.0.0:6702 --timeout
 5. `PageContextCache`：缓存页面分类结果。
 6. `VisualLocator`：OpenCV / 坐标定位。
 7. `RecipeStore`、`TraceRecorder`、`BehaviorSummarizer`：动作记忆链路。
-8. `Strategist`、`Planner`、`ActionDispatcher`、`VisionActionStep`、`RecipeOperator`、`SubtaskRunner`、`Operator`、`Supervisor`。
+8. `Backend`：按 `agent.runtime.mode` 由 `_build_backend()` 构造（`MacOSChromeBackend` 或 `AgentBayBackend`）。
+9. `Strategy`：按同样的 mode 由 `_build_strategy()` 构造（`VisionActionStep` 或 `AliyunMobileAgentStrategy`）。
+10. `Strategist`、`Planner`、`ActionDispatcher`（注入 backend）、`VisionActionStep`（注入 backend）、`RecipeOperator`（注入 backend）、`SubtaskRunner`（注入 strategy）、`Operator`、`Supervisor`。
 
-新人修改依赖连线时，优先看 `AppContainer`，不要在业务函数里临时创建全局对象。
+新人修改依赖连线时，优先看 `AppContainer`，不要在业务函数里临时创建全局对象。新增执行模式时，往 `_build_backend()` 和 `_build_strategy()` 里加分支即可，agent 层不动。
 
 ## 5. 任务执行主链路
 
@@ -130,9 +140,25 @@ POST /api/v1/agent/actions/sync
 
 `SubtaskRunner` 的职责：
 
-1. 先尝试 recipe 快路径。
-2. 失败时回退 LLM 视觉动作循环。
-3. 遇到步数耗尽时续航重试。
+1. 先尝试 recipe 快路径（mode 无关，所有模式都受益于已沉淀的动作链）。
+2. 未命中时调用注入的 `SubtaskStrategy.run()` —— 具体实现由 mode 决定。
+3. 遇到 `StepBudgetExceededError` 时按 `max_resumes` 续航重试（仅 vision 循环会抛此异常；委托模式自带超时）。
+
+## 5.1 Backend 与 Strategy 抽象
+
+两个正交的扩展点把"环境"和"决策"解耦：
+
+- **`ActionBackend`**（`tools/backends/__init__.py`）回答"在哪执行原子动作"。Protocol 只有两个方法：`screenshot(trace_id, include_cursor) -> (b64, mx, my)` 和 `execute_action(trace_id, {method, params, finish}) -> dict`。三个消费方（`ActionDispatcher`、`VisionActionStep`、`RecipeOperator`）通过构造函数注入 backend，永远不直接 import `tools.actions` / `tools.screenshot`。
+- **`SubtaskStrategy`**（`agents/operator/strategy.py`）回答"如何把 SubTask 变成 TaskResult"。Protocol：`name + async run(subtask, ctx) -> TaskResult`。两种实现：
+  - `VisionActionStep`：自家 VLM 视觉循环（mode 1/2）
+  - `AliyunMobileAgentStrategy`：把整个子任务交给阿里 mobile_use Agent 黑盒（mode 3）
+
+云端 session 是懒加载的：构造 `AgentBayBackend` 不会建实例，第一次 `screenshot()` 或 `ensure_session()` 才真正产生云端计费。`GET /api/v1/agent/runtime` 返回 `session_active` 字段供查看。
+
+新增动作或新增模式的影响面：
+- 新增**只用于本地**的原子动作：改 `tools/actions.py` + `prompts/operator/action.md`。
+- 新增**跨模式**的原子动作：同时改 `tools/actions.py` 和 `tools/backends/agentbay.py` 的 `match` 块。在云端无意义的动作（如 `move` 光标）应返回 `ok=True` 加 message 说明，避免打断 LLM 链路。
+- 新增**第四种执行模式**：在 `tools/backends/` 加新 backend 实现 → 在 `runtime/container._build_backend` 加分支 → 视情况加新 strategy。
 
 ## 6. Vision-Action 循环
 
@@ -140,13 +166,15 @@ POST /api/v1/agent/actions/sync
 
 一轮循环包含：
 
-1. `_observe()`：截图，得到 `Observation(image_base64, captured_at)`。
+1. `_observe()`：调 `backend.screenshot(...)`，得到 `Observation(image_base64, captured_at)`。
 2. `_think()`：把截图和上一步结果发给 LLM，得到 `Decision`。
 3. `Decision.parse()`：清洗 LLM 输出，转成 `Action` 列表。
 4. `_dispatcher.dispatch()`：执行 action。
 5. `TraceRecorder.record_llm_step()`：记录可复用轨迹。
 
-LLM 的坐标采用 0-1000 归一化坐标，真实屏幕坐标由 `tools/screen.py::llm_to_screen()` 转换。
+LLM 的坐标采用 0-1000 归一化坐标，每个 backend 内部自行换算成像素：
+- `MacOSChromeBackend` 走 `tools/screen.py::llm_to_screen()`，使用当前 Chrome 窗口位置。
+- `AgentBayBackend` 走 `_llm_to_pixel()`，使用最近一次 `beta_take_screenshot()` 缓存的屏幕宽高。
 
 ## 7. Action 分发
 
@@ -154,7 +182,7 @@ LLM 的坐标采用 0-1000 归一化坐标，真实屏幕坐标由 `tools/screen
 
 1. `finish`：任务结束，返回 summary。
 2. skill tool：如果 `SkillRegistry` 里存在同名工具，调用技能脚本。
-3. atomic action：否则调用 `tools/actions.py::execute_action()`。
+3. atomic action：否则调用注入的 `backend.execute_action()`，由对应 backend 转发到 PyAutoGUI（本地）或 AgentBay session（云端）。
 
 常见原子动作：
 
@@ -162,7 +190,7 @@ LLM 的坐标采用 0-1000 归一化坐标，真实屏幕坐标由 `tools/screen
 click / dblclick / move / scroll / drag / paste / copy / wait / hotkey
 ```
 
-这些动作最终由 PyAutoGUI 执行，并带有人类化移动、抖动、等待。
+`MacOSChromeBackend` 由 PyAutoGUI 执行，带人类化移动、抖动、等待。`AgentBayBackend` 通过 `session.mobile.tap/swipe/input_text/send_key` 走云端 Android 原生事件注入。
 
 ## 8. Skill 系统
 
@@ -391,6 +419,7 @@ agents/supervisor/scheduled_jobs.py
 ```text
 GET  /health
 GET  /api/v1/agent/status
+GET  /api/v1/agent/runtime           # 当前 mode / backend / strategy / AgentBay session 状态
 POST /api/v1/agent/actions
 POST /api/v1/agent/actions/sync
 POST /api/v1/agent/patrol
@@ -503,10 +532,34 @@ result = await runner.run(subtask, ctx)
 改 skills/<domain>/<skill>/scripts/*.py
 ```
 
-新增一个原子 PyAutoGUI 动作：
+新增一个原子 PyAutoGUI 动作（仅本地）：
 
 ```text
 改 tools/actions.py 和 prompts/operator/action.md
+```
+
+新增一个跨模式的原子动作（本地 + 云手机都要支持）：
+
+```text
+改 tools/actions.py（macOS 实现）
+改 tools/backends/agentbay.py 的 execute_action 的 match 块（云手机映射）
+改 prompts/operator/action.md（让 LLM 知道有这个动作）
+```
+
+切换执行模式：
+
+```text
+设置环境变量 AGENT_RUNTIME_MODE=local_chrome | cloud_vision | cloud_aliyun
+云端模式必填 AGENTBAY_API_KEY，可选 AGENTBAY_IMAGE_ID / AGENTBAY_SCREENSHOT_FORMAT
+启动后 curl /api/v1/agent/runtime 验证当前模式与 backend / strategy
+```
+
+新增第四种执行模式（例如桌面云电脑、其他厂商的云手机）：
+
+```text
+在 tools/backends/ 新建实现，满足 ActionBackend Protocol
+在 runtime/container.py::_build_backend 加 mode 分支
+若需要不同决策方式，新增一个 SubtaskStrategy 实现并在 _build_strategy 加分支
 ```
 
 新增一个定时任务：

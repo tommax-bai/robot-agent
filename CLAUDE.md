@@ -4,7 +4,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-A Python agent framework for autonomously operating GUIs (currently targeting Xiaohongshu/小红书) via vision-language models. The agent captures screenshots, reasons about them with a VLM (Gemini/Claude), and executes mouse/keyboard actions through browser automation on macOS.
+A Python agent framework for autonomously operating GUIs (currently targeting Xiaohongshu/小红书) via vision-language models. The agent captures screenshots, reasons about them with a VLM (Gemini/Claude), and dispatches actions to a pluggable backend.
+
+Three execution modes are supported via `agent.runtime.mode` (see "Execution backends and strategies" below):
+
+| mode | environment | decision |
+|------|-------------|----------|
+| `local_chrome` (default) | macOS Chrome via PyAutoGUI | own VLM (`VisionActionStep`) |
+| `cloud_vision` | Aliyun Wuying CloudPhone (Android, AgentBay SDK) | own VLM |
+| `cloud_aliyun` | Aliyun Wuying CloudPhone | Aliyun `mobile_use` Agent (delegated, black-box) |
 
 ## Development Commands
 
@@ -28,6 +36,10 @@ curl -X POST http://127.0.0.1:6702/api/v1/agent/actions/sync \
 
 # Verify config + container boots
 .venv/bin/python -c "import config; config.validate(); from runtime.container import init_container; init_container(); print('OK')"
+
+# Switch to cloud mode (no real session created until first task)
+AGENT_RUNTIME_MODE=cloud_vision AGENTBAY_API_KEY=<key> uvicorn app:app --port 6702
+curl http://127.0.0.1:6702/api/v1/agent/runtime   # inspect current mode/backend/strategy
 ```
 
 ## Architecture
@@ -48,9 +60,11 @@ The codebase is divided into 5 layers, each with a single responsibility:
 |-------|------|---------------|
 | `Supervisor` | `agents/supervisor/supervisor.py` | Mode management (WAITING/PATROLLING/EXECUTING/DEBUG), task preemption, schedule loop driver, status queries |
 | `Operator` | `agents/operator/operator.py` | Top-level task orchestration: plan → execute subtasks |
-| `SubtaskRunner` | `agents/operator/subtask_runner.py` | Per-subtask execution + step-budget retry logic |
-| `VisionActionStep` | `agents/operator/vision_action.py` | The visual loop: observe (screenshot) → think (LLM) → act (dispatch) |
-| `ActionDispatcher` | `agents/operator/action_dispatcher.py` | Routes decisions to skill tools / atomic actions / finish |
+| `SubtaskRunner` | `agents/operator/subtask_runner.py` | Per-subtask execution + step-budget retry logic; delegates to a `SubtaskStrategy` |
+| `SubtaskStrategy` | `agents/operator/strategy.py` | Protocol: `name + async run(subtask, ctx) -> TaskResult`. Two impls below. |
+| `VisionActionStep` | `agents/operator/vision_action.py` | Strategy impl — own VLM visual loop: observe (screenshot) → think (LLM) → act (dispatch). Used by `local_chrome` & `cloud_vision`. |
+| `AliyunMobileAgentStrategy` | `agents/operator/aliyun_strategy.py` | Strategy impl — delegates the entire subtask to Aliyun `session.agent.mobile_use.execute_task_and_wait`. Used by `cloud_aliyun`. |
+| `ActionDispatcher` | `agents/operator/action_dispatcher.py` | Routes decisions to skill tools / atomic actions / finish. Atomic actions go through the injected `ActionBackend`. |
 | `Planner` | `agents/planner/planner.py` | LLM-driven task decomposition into `Plan` of `SubTask`s |
 | `Strategist` | `agents/strategist/strategist.py` | Content strategy: brainstorm topics, generate patrol/posting goals |
 
@@ -80,16 +94,47 @@ All agents share the **typed contract** defined in `agents/base.py`:
 
 | Tool | Role |
 |------|------|
-| `actions.py` | GUI execution: click, dblclick, move, scroll, drag, paste, copy, hotkey, wait. All actions are humanized (Bezier mouse paths, jitter, pre/post pauses). |
-| `screenshot.py` | Screen capture, cursor overlay, base64 encoding. Updates `screen.update_window()` with current Chrome window geometry. |
-| `screen.py` | Coordinate conversion (LLM 0-1000 ↔ physical pixels) + window state. |
+| `backends/__init__.py` | `ActionBackend` Protocol (`screenshot` + `execute_action`) + re-exports of impls. |
+| `backends/macos_chrome.py` | `MacOSChromeBackend` — thin wrapper delegating to `tools.actions` / `tools.screenshot`. Used by `local_chrome` mode. |
+| `backends/agentbay.py` | `AgentBayBackend` — Aliyun Wuying CloudPhone session. Lazy session creation via `ensure_session(trace_id)` (no spend until first call). Used by `cloud_vision` and `cloud_aliyun`. |
+| `actions.py` | macOS atomic GUI execution: click, dblclick, move, scroll, drag, paste, copy, hotkey, wait. Humanized (Bezier mouse paths, jitter, pre/post pauses). **Implementation detail of `MacOSChromeBackend`** — agents don't import this directly. |
+| `screenshot.py` | macOS screen capture (ImageGrab + pywinctl + CDP window matching). Updates `screen.update_window()`. **Implementation detail of `MacOSChromeBackend`**. |
+| `screen.py` | Coordinate conversion (LLM 0-1000 ↔ physical pixels) + window state. **Implementation detail of `MacOSChromeBackend`**. |
 | `cleanup.py` | Chrome environment reset (close all tabs except a blank one). |
 | `llm_caller.py` | Lower-level LLM caller with retry, token logging, JSON/text/template modes. |
 | `llm_tool.py` | `LlmTool` class (DI'd into agents). `with_trace(trace_id)` derives a bound child. `MockLlmTool` available for testing. |
 
+### Execution backends and strategies
+
+The agent layer is decoupled from the execution environment via two orthogonal abstractions:
+
+- **`ActionBackend`** (`tools/backends/__init__.py`) — *where* atomic actions run. Methods: `screenshot(trace_id, include_cursor) -> (b64, mx, my)` and `execute_action(trace_id, {method, params, finish}) -> {ok, message, finish, ...}`. Three consumers (`ActionDispatcher`, `VisionActionStep`, `RecipeOperator`) take it via constructor injection — they never import `tools.actions` / `tools.screenshot` directly.
+- **`SubtaskStrategy`** (`agents/operator/strategy.py`) — *how* a subtask becomes a `TaskResult`. `SubtaskRunner` always tries `RecipeOperator` first (mode-agnostic), then delegates to the injected strategy.
+
+`runtime.container._build_backend()` and `_build_strategy()` branch on `agent.runtime.mode`:
+
+| mode | backend | strategy |
+|------|---------|----------|
+| `local_chrome` | `MacOSChromeBackend` | `VisionActionStep` |
+| `cloud_vision` | `AgentBayBackend` | `VisionActionStep` |
+| `cloud_aliyun` | `AgentBayBackend` (shared session) | `AliyunMobileAgentStrategy` |
+
+Recipes execute through the backend regardless of mode — a recipe authored on macOS can replay on a cloud phone if its `locator` resolves.
+
+When **adding a new atomic action** that should work cross-mode, you must update both backends (`tools/actions.py` for macOS, the `match` block in `tools/backends/agentbay.py` for AgentBay). Mobile-irrelevant actions (e.g. `move` cursor) should return `ok=True` with a no-op note rather than failing, so the LLM chain isn't broken.
+
 ### Configuration (`config.py`)
 
-Three top-level namespaces (`system`, `model`, `agent`). `agent` 下按职责分为 `persona`（人设身份）、`schedule`（调度约束）、`storage`（持久化路径）、`planner`/`operator`/`page_classifier`/`behavior_summarizer`（模型配置）等子命名空间。Validated at startup via `config.validate()` against `_REQUIRED_SCHEMA` — missing keys cause immediate `RuntimeError` instead of silent runtime failures. Long content (e.g. recruitment info) lives in external files under `prompts/`.
+Three top-level namespaces (`system`, `model`, `agent`). `agent` 下按职责分为 `persona`（人设身份）、`schedule`（调度约束）、`storage`（持久化路径）、`runtime`（执行模式 + AgentBay 凭证）、`planner`/`operator`/`page_classifier`/`behavior_summarizer`（模型配置）等子命名空间。Validated at startup via `config.validate()` against `_REQUIRED_SCHEMA` — missing keys cause immediate `RuntimeError` instead of silent runtime failures. Long content (e.g. recruitment info) lives in external files under `prompts/`.
+
+`agent.runtime` controls execution mode and is fully env-driven:
+
+```text
+AGENT_RUNTIME_MODE          local_chrome | cloud_vision | cloud_aliyun   (default: local_chrome)
+AGENTBAY_API_KEY            required when mode != local_chrome
+AGENTBAY_IMAGE_ID           default: mobile_latest
+AGENTBAY_SCREENSHOT_FORMAT  default: jpeg (jpeg|png)
+```
 
 ### Prompt templates (`prompts/`)
 
@@ -131,17 +176,21 @@ Operator.run(task, ctx)
    ↓ for each subtask:
    ↓   SubtaskRunner.run(subtask, ctx)
    ↓     RecipeOperator.try_run() — match by subtask.intent + page_state
-   ↓       hit → execute recipe steps (skip LLM) → done
-   ↓       miss → fall through to LLM
-   ↓     VisionActionStep.run(subtask, ctx)
-   ↓       loop:
-   ↓         _observe → screenshot + PageContextCache.get_or_classify()
-   ↓         _think → ctx.llm.call_json (with ConversationHistory)
-   ↓         _act → ActionDispatcher.dispatch
-   ↓                  → SkillRegistry.invoke_tool  (custom tools)
-   ↓                  → tools.actions.execute_action  (atomic)
-   ↓       on finish: TaskResult.success
-   ↓       on budget: StepBudgetExceededError → SubtaskRunner retries
+   ↓       hit → execute recipe steps via backend (skip LLM) → done
+   ↓       miss → fall through to strategy
+   ↓     strategy.run(subtask, ctx)   # injected per agent.runtime.mode
+   ↓       VisionActionStep (local_chrome / cloud_vision):
+   ↓         loop:
+   ↓           _observe → backend.screenshot + PageContextCache.get_or_classify()
+   ↓           _think   → ctx.llm.call_json (with ConversationHistory)
+   ↓           _act     → ActionDispatcher.dispatch
+   ↓                        → SkillRegistry.invoke_tool   (custom tools)
+   ↓                        → backend.execute_action      (atomic)
+   ↓         on finish: TaskResult.success
+   ↓         on budget: StepBudgetExceededError → SubtaskRunner retries
+   ↓       AliyunMobileAgentStrategy (cloud_aliyun):
+   ↓         asyncio.to_thread(session.agent.mobile_use.execute_task_and_wait, goal, timeout)
+   ↓         map result.success / result / error_message → TaskResult
    ↓
 TaskResult
 ```
@@ -150,7 +199,9 @@ For scheduled jobs (patrol/post/dm/cr), `agents/supervisor/scheduled_jobs.py` re
 
 ### Coordinate system
 
-LLM produces normalized coordinates in 0-1000 range. `tools/screen.py::llm_to_screen()` converts to physical pixels using the current window position (updated by `screenshot.py::update_window()` on each capture).
+LLM produces normalized coordinates in 0-1000 range. Each backend converts internally:
+- `MacOSChromeBackend` — `tools/screen.py::llm_to_screen()` uses the current Chrome window position (updated by `screenshot.py::update_window()` each capture).
+- `AgentBayBackend` — `_llm_to_pixel()` uses screen dimensions cached from the most recent `beta_take_screenshot()` (`_screen_w / _screen_h`). The vision loop guarantees a screenshot precedes any action, so the cache is always populated.
 
 ### Cancellation
 
@@ -164,15 +215,17 @@ Supervisor uses `CancelToken` for cooperative tree-wise cancellation:
 - `POST /api/v1/agent/actions` — async task (returns trace_id immediately)
 - `POST /api/v1/agent/actions/sync` — blocking task (returns full result)
 - `GET /api/v1/agent/status` — current mode + active run + today's stats
+- `GET /api/v1/agent/runtime` — runtime introspection: `agent.runtime.mode`, backend class, strategy class, AgentBay session activity (no session creation)
 - `POST /api/v1/agent/patrol` — toggle scheduler on/off
-- `POST /api/v1/agent/mode/{debug,waiting}` — mode switching
+- `POST /api/v1/agent/mode/{debug,waiting}` — supervisor mode switching (orthogonal to `agent.runtime.mode`)
 - `GET /api/v1/agent/chrome/{path}` — Chrome DevTools Protocol HTTP proxy
 - `WS /api/v1/agent/chrome/ws/{page_id}` — Chrome DevTools Protocol WebSocket proxy
 
 ## Important Notes
 
-- **macOS-only**: depends on `PyAutoGUI` + `pyobjc` + accessibility permissions for GUI control
-- **Chrome must be launched** by `utils/init_functions/init_chrome_client.py` with `--remote-debugging-port=9222`. Chrome binary path is configurable via `CHROME_BINARY` and `CHROMEDRIVER_PATH` env vars
+- **OS dependency depends on mode**: `local_chrome` requires macOS + `PyAutoGUI` + `pyobjc` + accessibility permissions; `cloud_vision` / `cloud_aliyun` only need `wuying-agentbay-sdk` and an API key — runnable on any OS.
+- **Chrome must be launched** (only in `local_chrome` mode) by `utils/init_functions/init_chrome_client.py` with `--remote-debugging-port=9222`. Chrome binary path is configurable via `CHROME_BINARY` and `CHROMEDRIVER_PATH` env vars.
+- **AgentBay session is lazy**: constructing `AgentBayBackend` does not allocate a cloud instance. The session is created on the first `screenshot()` / `execute_action()` / `ensure_session()` call. Inspect via `GET /api/v1/agent/runtime` (`session_active` field).
 - **Codebase language**: comments, prompts, log messages are Chinese; Python identifiers and types are English
 - **No test framework configured** — `MockLlmTool` and `InMemoryStateRepo` exist for future test infrastructure but no pytest setup
 - **State storage**: agent state is a single JSON file at `data/agent_state.json`. The full schema is in `services/agent_state.DEFAULT_STATE` — extend there when adding new fields

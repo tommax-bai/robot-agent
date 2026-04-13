@@ -4,6 +4,62 @@
 - 开发规范：`docs/development_guide.md`
 - AI 助手协作说明：`CLAUDE.md`
 
+## 执行模式（agent.runtime.mode）
+
+通过环境变量 `AGENT_RUNTIME_MODE` 在三种模式间切换。三种模式正交于"环境（Backend）"和"决策（Strategy）"两个维度：
+
+| mode | Backend | Strategy | 适用 |
+|------|---------|----------|------|
+| `local_chrome`（默认） | `MacOSChromeBackend`：PyAutoGUI + ImageGrab | `VisionActionStep`：自家 VLM 视觉循环 | 本地开发/调试 |
+| `cloud_vision` | `AgentBayBackend`：阿里无影云手机 session | `VisionActionStep`：同上 | 矩阵账号生产、防风控 |
+| `cloud_aliyun` | `AgentBayBackend` | `AliyunMobileAgentStrategy`：委托给阿里 mobile_use Agent | 任务原型/兜底，决策黑盒 |
+
+三种模式都先尝试 `RecipeOperator` 快路径（命中即跳过 Strategy）。云端模式下 recipe 的 tap/swipe 自动走 AgentBay。
+
+### 切换示例
+
+```bash
+# 默认本地（无需设置）
+uvicorn app:app --port 6702
+
+# 切到云手机 + 自家 VLM
+export AGENT_RUNTIME_MODE=cloud_vision
+export AGENTBAY_API_KEY=<你的阿里云 AccessKey>
+export AGENTBAY_IMAGE_ID=mobile_latest        # 可选，默认 mobile_latest
+export AGENTBAY_SCREENSHOT_FORMAT=jpeg        # 可选，jpeg|png
+uvicorn app:app --port 6702
+
+# 切到云手机 + 阿里 mobile_use Agent
+export AGENT_RUNTIME_MODE=cloud_aliyun
+export AGENTBAY_API_KEY=<...>
+uvicorn app:app --port 6702
+```
+
+### 查看当前模式
+
+```bash
+curl http://127.0.0.1:6702/api/v1/agent/runtime
+```
+
+返回示例（cloud_vision 模式，session 尚未建立）：
+
+```json
+{
+  "mode": "cloud_vision",
+  "backend": "AgentBayBackend",
+  "strategy": {"type": "VisionActionStep", "name": "vision_action"},
+  "agentbay": {
+    "image_id": "mobile_latest",
+    "screenshot_format": "jpeg",
+    "session_active": false,
+    "screen_size": {"width": 0, "height": 0}
+  }
+}
+```
+
+云端 session 是**懒加载**的——发起第一次任务前不会有任何云端实例计费。`session_active=true` 表示已建立。
+
+
 ## 本地环境
 
 VERSION="145.0.7632.76"

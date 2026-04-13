@@ -22,7 +22,6 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING
 
-import tools.actions as atomic_actions
 import utils.logger as logger
 from agents.base import (
     Action,
@@ -35,11 +34,13 @@ from agents.base import (
 if TYPE_CHECKING:
     from runtime.context import RunContext
     from services.skill_registry import SkillRegistry
+    from tools.backends import ActionBackend
 
 
 class ActionDispatcher:
-    def __init__(self, skills: SkillRegistry):
+    def __init__(self, skills: SkillRegistry, backend: ActionBackend):
         self._skills = skills
+        self._backend = backend
 
     async def dispatch(self, actions: list[Action], ctx: RunContext) -> ActionOutcome:
         results: list[ActionResult] = []
@@ -90,7 +91,7 @@ class ActionDispatcher:
 
     def _dispatch_atomic(self, action: Action, ctx: RunContext) -> ActionResult:
         try:
-            raw = atomic_actions.execute_action(
+            raw = self._backend.execute_action(
                 ctx.trace_id,
                 {"method": action.method, "params": action.params},
             )

@@ -242,18 +242,25 @@ LLM 输出解析统一放在 `agents/base.py::Decision.parse()` 或对应解析�
 
 ## 13. GUI Action 规范
 
-GUI 动作分三层：
+GUI 动作分四层（自上而下）：
 
-1. `VisionActionStep`：截图、调用 LLM、得到 `Decision`。
+1. `VisionActionStep`：截图、调用 LLM、得到 `Decision`（也可被 `AliyunMobileAgentStrategy` 替换为黑盒委托）。
 2. `ActionDispatcher`：决定动作发给 skill tool 还是原子 action。
-3. `tools/actions.py`：真正执行 PyAutoGUI。
+3. `ActionBackend` Protocol（`tools/backends/__init__.py`）：抽象的 `screenshot` / `execute_action` 入口，决定动作落在哪个环境。
+4. Backend 实现：`MacOSChromeBackend`（PyAutoGUI / mss）或 `AgentBayBackend`（云手机 session）。
+
+`ActionDispatcher` / `VisionActionStep` / `RecipeOperator` 都通过构造函数注入 backend，**不要**在业务代码里直接 `import tools.actions` 或 `import tools.screenshot`。
 
 新增原子动作时：
 
-1. 在 `tools/actions.py::execute_action()` 增加 method 分支。
-2. 参数用 `get_param()` 做 LLM 脏键名兼容。
-3. 返回统一结构：`{"ok": bool, "message": str, "finish": bool}`。
-4. 不要让 action 直接读写 Agent 状态。
+1. 在 `tools/actions.py::execute_action()` 增加 method 分支（macOS 实现）。
+2. 在 `tools/backends/agentbay.py::execute_action` 的 `match` 块加同名分支（云手机实现）。如果该动作在云手机上没有等价物（如 `move` 光标），返回 `{"ok": True, "message": "...已忽略", "finish": finish}` 而不是失败，避免打断 LLM 链路。
+3. 参数用 `get_param()`（macOS 端）/ `_get()`（AgentBay 端）做 LLM 脏键名兼容。
+4. 返回统一结构：`{"ok": bool, "message": str, "finish": bool}`。
+5. 不要让 action 直接读写 Agent 状态。
+6. 在 `prompts/operator/action.md` 里告诉 LLM 这个动作的存在与参数。
+
+只用于本地（例如依赖 macOS 系统快捷键）的动作可以只实现 macOS 端，但要在 prompt 里说明该动作仅在 `local_chrome` 模式可用，或在 AgentBay 端返回 `ok=False` 加明确 message。
 
 ## 14. 可重复动作 Recipe 规范
 
