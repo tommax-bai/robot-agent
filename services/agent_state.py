@@ -170,8 +170,8 @@ class JsonFileStateRepo:
     def update(self, **kwargs) -> dict:
         try:
             state = _apply_patch(self.get(), self._limits, **kwargs)
-            self._path.parent.mkdir(parents=True, exist_ok=True)
-            self._path.write_text(json.dumps(state, ensure_ascii=False, indent=4), encoding="utf-8")
+            from utils.atomic_write import atomic_write_text
+            atomic_write_text(self._path, json.dumps(state, ensure_ascii=False, indent=4))
             logger.info({"msg": "状态同步成功"}, kwargs.get("trace_id", "system"))
             return state
         except Exception as e:

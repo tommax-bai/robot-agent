@@ -3,7 +3,7 @@ SubtaskRunner: 单个子任务的执行 + 续航重试。
 
 执行链路：
 1. 优先走 RecipeOperator 快路径（命中即返回，跳过 LLM）
-2. 未命中则委托给注入的 SubtaskStrategy（VisionActionStep / AliyunMobileAgentStrategy / ...）
+2. 未命中则委托给注入的 SubtaskStrategy（VisionActionStep / AgentBayDelegateStrategy / ...）
 3. Strategy 抛 StepBudgetExceededError 时按 max_resumes 续航重试
 
 Strategy 的具体实现由 mode 决定，Runner 自身不感知是哪种 mode。
@@ -37,6 +37,10 @@ class SubtaskRunner:
         self._recipe_operator = recipe_operator
         self._behavior_summarizer = behavior_summarizer
         self._max_resumes = max_resumes
+
+    def set_strategy(self, strategy: SubtaskStrategy) -> None:
+        """替换子任务执行策略（用于 runtime mode 热切换）。"""
+        self._strategy = strategy
 
     async def run(self, subtask: SubTask, ctx: RunContext) -> TaskResult:
         if self._recipe_operator is not None and self._recipe_operator.has_recipes:

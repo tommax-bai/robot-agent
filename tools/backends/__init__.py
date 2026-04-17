@@ -45,7 +45,18 @@ class ActionBackend(Protocol):
         ...
 
 
-from tools.backends.agentbay import AgentBayBackend  # noqa: E402
+from tools.backends.agentbay import AgentBayBackend, cleanup_orphan_sessions  # noqa: E402
 from tools.backends.macos_chrome import MacOSChromeBackend  # noqa: E402
+from tools.backends.remote import RemoteBackend  # noqa: E402
+from tools.backends.remote_delegate import RemoteDelegateStrategy  # noqa: E402
+from tools.backends.session_manager import SessionManager, SessionState, is_session_dead_error  # noqa: E402
 
-__all__ = ["ActionBackend", "AgentBayBackend", "MacOSChromeBackend"]
+__all__ = [
+    "ActionBackend",
+    "AgentBayBackend",
+    "MacOSChromeBackend",
+    "cleanup_orphan_sessions",
+    "SessionManager",
+    "SessionState",
+    "is_session_dead_error",
+]

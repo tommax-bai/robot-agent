@@ -244,7 +244,7 @@ LLM 输出解析统一放在 `agents/base.py::Decision.parse()` 或对应解析�
 
 GUI 动作分四层（自上而下）：
 
-1. `VisionActionStep`：截图、调用 LLM、得到 `Decision`（也可被 `AliyunMobileAgentStrategy` 替换为黑盒委托）。
+1. `VisionActionStep`：截图、调用 LLM、得到 `Decision`（也可被 `AgentBayDelegateStrategy` 替换为黑盒委托）。
 2. `ActionDispatcher`：决定动作发给 skill tool 还是原子 action。
 3. `ActionBackend` Protocol（`tools/backends/__init__.py`）：抽象的 `screenshot` / `execute_action` 入口，决定动作落在哪个环境。
 4. Backend 实现：`MacOSChromeBackend`（PyAutoGUI / mss）或 `AgentBayBackend`（云手机 session）。

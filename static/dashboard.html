@@ -1,0 +1,1081 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Agent Dashboard</title>
+<style>
+  :root {
+    --bg: #0e1116;
+    --panel: #161b22;
+    --panel-2: #1f262e;
+    --border: #30363d;
+    --text: #e6edf3;
+    --muted: #8b949e;
+    --accent: #58a6ff;
+    --green: #3fb950;
+    --yellow: #d29922;
+    --red: #f85149;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", "PingFang SC", "Microsoft YaHei", sans-serif; font-size: 14px; }
+  header {
+    padding: 12px 20px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center;
+    background: var(--panel);
+  }
+  header h1 { margin: 0; font-size: 16px; font-weight: 600; }
+  header .conn { font-size: 12px; color: var(--muted); }
+  header .conn .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--red); margin-right: 6px; vertical-align: middle; }
+  header .conn.online .dot { background: var(--green); }
+  /* 页面自然滚动；左栏内容决定页高，右栏 sticky 吸顶不受影响 */
+  header { position: sticky; top: 0; z-index: 10; }
+  .grid { display: grid; grid-template-columns: 320px 1fr; gap: 0; align-items: start; }
+  .col { background: var(--bg); }
+  /* 右栏 sticky：滚到日志时 Live View 继续贴顶，不被遮挡 */
+  .col-right { position: sticky; top: 49px; align-self: start; max-height: calc(100vh - 49px); overflow: hidden; }
+  .panel { background: var(--panel); margin: 12px; border: 1px solid var(--border); border-radius: 6px; }
+  .panel h2 { margin: 0; padding: 8px 12px; font-size: 12px; font-weight: 600; color: var(--muted); border-bottom: 1px solid var(--border); text-transform: uppercase; letter-spacing: 0.05em; }
+  .panel .body { padding: 12px; }
+  .kv { display: grid; grid-template-columns: 90px 1fr; gap: 4px 8px; font-size: 13px; }
+  .kv .k { color: var(--muted); }
+  .kv .v { word-break: break-all; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; text-transform: lowercase; }
+  .badge.waiting { background: #21262d; color: var(--muted); }
+  .badge.patrolling { background: #1f3a1f; color: var(--green); }
+  .badge.executing { background: #3a2f1a; color: var(--yellow); }
+  .badge.debug { background: #3a1f1f; color: var(--red); }
+  .actions { display: flex; flex-wrap: wrap; gap: 6px; }
+  /* Actions 面板内的小节分组：标签 + 按钮组 */
+  .action-group { margin-top: 12px; }
+  .action-group:first-child { margin-top: 0; }
+  .action-group h3 { margin: 0 0 6px 0; font-size: 10px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+  .action-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  button {
+    background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 4px;
+    padding: 6px 12px; font-size: 12px; cursor: pointer; font-family: inherit;
+  }
+  button:hover { background: #2a323d; border-color: var(--accent); }
+  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  button.danger { color: var(--red); border-color: var(--red); }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  textarea {
+    width: 100%; min-height: 60px; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px;
+    padding: 6px; font-family: inherit; font-size: 13px; resize: vertical;
+  }
+  .liveview { background: #000; border: 1px solid var(--border); border-radius: 6px; margin: 12px; overflow: hidden; min-height: calc(100vh - 160px); display: flex; align-items: center; justify-content: center; }
+  .liveview .placeholder { padding: 40px; text-align: center; color: var(--muted); font-size: 13px; }
+  .liveview iframe { width: 100%; height: calc(100vh - 160px); min-height: 440px; border: 0; display: block; background: #000; }
+  .liveview img { max-width: 100%; max-height: calc(100vh - 160px); display: block; margin: 0 auto; }
+
+  /* Multi-view grid：所有 worker 的 live view 同屏并排 */
+  .liveview-grid { display: none; padding: 6px; gap: 6px; height: calc(100vh - 160px); overflow: auto; }
+  .liveview-grid.show { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); grid-auto-rows: minmax(280px, 1fr); }
+  .liveview-cell { background: #000; border: 1px solid var(--border); border-radius: 4px; position: relative; overflow: hidden; }
+  .liveview-cell:hover { border-color: var(--accent); }
+  .liveview-cell.active { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(88,166,255,.3); }
+  .liveview-cell iframe { width: 100%; height: 100%; border: 0; background: #000; }
+  /* 非 active cell：全身覆盖一个透明 overlay，接住第一次点击 → 切 active；
+     active cell 的 overlay 被 CSS 隐藏，iframe 可直接交互 */
+  .liveview-cell .cell-overlay {
+    position: absolute; inset: 0; z-index: 4; cursor: pointer; background: transparent;
+  }
+  .liveview-cell.active .cell-overlay { display: none; }
+  /* cell-header 是顶部 28px 浮层，承担 单击/双击 切换；不挡 iframe 主体（云手机操作不受影响） */
+  .liveview-cell .cell-header {
+    position: absolute; top: 0; left: 0; right: 0; height: 28px;
+    background: linear-gradient(180deg, rgba(0,0,0,.75) 0%, rgba(0,0,0,0) 100%);
+    display: flex; align-items: center; padding: 0 8px;
+    z-index: 5; cursor: pointer; user-select: none;
+  }
+  .liveview-cell .cell-header .label { color: var(--text); font-size: 11px; font-weight: 600; }
+  .liveview-cell .cell-header .meta { color: var(--muted); margin-left: 6px; font-weight: 400; font-size: 10.5px; }
+  .liveview-cell .cell-shutdown {
+    margin-left: auto; background: transparent; border: 1px solid transparent;
+    color: var(--muted); cursor: pointer; padding: 2px 6px; border-radius: 3px;
+    font-size: 14px; line-height: 1;
+  }
+  .liveview-cell .cell-shutdown:hover { color: var(--red); border-color: var(--red); background: rgba(248,81,73,.1); }
+  .liveview-cell .ph { display: flex; align-items: center; justify-content: center; height: 100%; color: var(--muted); font-size: 12px; padding: 12px; text-align: center; }
+  /* pending 状态（session 创建中）：placeholder 带脉动动画 */
+  .liveview .pending, .liveview-cell .pending { color: var(--accent); }
+  .liveview .pending .dot-load, .liveview-cell .pending .dot-load {
+    display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+    background: var(--accent); margin-right: 8px; vertical-align: middle;
+    animation: pulse 1s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 0.3; transform: scale(0.8); }
+    50%      { opacity: 1;   transform: scale(1.2); }
+  }
+  /* "返回网格"链接：仅 single + 多 worker 时显示 */
+  .back-to-grid { margin-left: auto; padding: 2px 10px; font-size: 11px; }
+
+  /* 左栏日志 panel：固定高度 + 内部滚动，行为等同独立区 */
+  .logs-panel .body { padding: 0; }
+  .logs-panel .logs { height: 420px; max-height: 420px; }
+  .logs-panel .logs:empty::before { content: '等待日志…'; color: var(--muted); font-size: 12px; display: block; padding: 10px; }
+  /* Worker tab bar */
+  .worker-tabs { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 12px; background: var(--panel); border-bottom: 1px solid var(--border); }
+  .worker-tab { padding: 4px 8px 4px 10px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--text); cursor: pointer; font-size: 12px; display: flex; gap: 6px; align-items: center; user-select: none; }
+  .worker-tab:hover { border-color: var(--accent); }
+  .worker-tab.active { border-color: var(--accent); background: var(--accent); color: #fff; }
+  .worker-tab .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); }
+  .worker-tab.exec .dot { background: var(--yellow); }
+  .worker-tab.patrol .dot { background: var(--green); }
+  .worker-tab.debug .dot { background: var(--red); }
+  .worker-tab .label { font-weight: 600; }
+  .worker-tab .meta { color: var(--muted); font-size: 10.5px; }
+  .worker-tab.active .meta { color: #cce6ff; }
+  .worker-tab .x { display: inline-block; margin-left: 4px; padding: 0 4px; color: var(--muted); border-radius: 2px; opacity: 0.5; }
+  .worker-tab .x:hover { background: var(--red); color: #fff; opacity: 1; }
+  .worker-tab.active .x { color: #cce6ff; }
+  .worker-add-tab { border: 1px solid var(--accent); color: var(--accent); background: transparent; padding: 4px 14px; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: 700; line-height: 1; }
+  .worker-add-tab:hover { background: var(--accent); color: #fff; }
+  /* 新增 worker：预设按钮组（避免 number input 高度对不齐）*/
+  .worker-add-form { display: none; padding: 8px; background: var(--panel); border-bottom: 1px solid var(--border); gap: 6px; align-items: center; font-size: 12px; }
+  .worker-add-form.show { display: flex; }
+  .worker-add-form .label { color: var(--muted); margin-right: 4px; }
+  .worker-add-form button { padding: 4px 12px; }
+
+  /* Logs panel */
+  .log-toolbar { flex: none; padding: 6px 12px; border-bottom: 1px solid var(--border); display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; font-size: 12px; }
+  .log-toolbar input[type=text] { flex: 1 1 260px; min-width: 180px; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 3px; padding: 4px 8px; font-family: inherit; font-size: 12px; }
+  .log-toolbar label { color: var(--muted); cursor: pointer; user-select: none; display: inline-flex; align-items: center; white-space: nowrap; }
+  .log-toolbar input[type=checkbox] { vertical-align: middle; margin: 0 3px 0 0; }
+  .logs { overflow: auto; font-family: SFMono-Regular, Menlo, Consolas, monospace; font-size: 11.5px; padding: 6px 12px; }
+  .logs .row { padding: 2px 0; white-space: pre-wrap; word-break: break-word; line-height: 1.5; }
+  .logs .row.lvl-INFO { color: var(--text); }
+  .logs .row.lvl-WARNING { color: var(--yellow); }
+  .logs .row.lvl-ERROR { color: var(--red); }
+  .logs .row.lvl-DEBUG { color: var(--muted); }
+  .logs .row .ts { color: var(--muted); margin-right: 6px; }
+  .logs .row .lvl { display: inline-block; min-width: 50px; opacity: 0.7; margin-right: 6px; font-weight: 600; }
+  .logs .row .trace { color: var(--accent); margin-right: 6px; }
+  .logs .row .extra { color: var(--muted); }
+  .small { color: var(--muted); font-size: 11px; margin-top: 4px; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Agent Dashboard <span id="hdr-mode" class="badge waiting" style="margin-left:8px"></span></h1>
+  <div class="conn" id="conn"><span class="dot"></span><span id="conn-text">SSE 未连接</span></div>
+</header>
+<div class="grid">
+  <!-- 左列：worker tab + 状态 + 操作 -->
+  <div class="col">
+    <div class="worker-tabs" id="worker-tabs">
+      <span class="small" style="padding:6px;color:var(--muted)">加载 worker 列表…</span>
+    </div>
+    <div class="worker-add-form" id="worker-add-form">
+      <span class="label">新增 worker:</span>
+      <button class="primary" onclick="createWorkers(1)">+1</button>
+      <button onclick="createWorkers(3)">+3</button>
+      <button onclick="createWorkers(5)">+5</button>
+      <button onclick="toggleAddForm(false)" style="margin-left:auto">收起</button>
+    </div>
+
+    <div class="panel">
+      <h2>Runtime <span class="small" id="active-worker-tag-1" style="margin-left:6px;color:var(--accent)"></span></h2>
+      <div class="body">
+        <div class="kv">
+          <div class="k">runtime.mode</div><div class="v" id="rt-mode">…</div>
+          <div class="k">backend</div><div class="v" id="rt-backend">…</div>
+          <div class="k">strategy</div><div class="v" id="rt-strategy">…</div>
+          <div class="k">image</div><div class="v" id="rt-image">—</div>
+          <div class="k">session</div><div class="v" id="rt-session">—</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Supervisor <span class="small" id="active-worker-tag-2" style="margin-left:6px;color:var(--accent)"></span></h2>
+      <div class="body">
+        <div class="kv">
+          <div class="k">mode</div><div class="v" id="sv-mode">—</div>
+          <div class="k">active</div><div class="v" id="sv-active">—</div>
+          <div class="k">trace_id</div><div class="v" id="sv-trace">—</div>
+          <div class="k">goal</div><div class="v" id="sv-goal">—</div>
+          <div class="k">elapsed</div><div class="v" id="sv-elapsed">—</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Tasks <span class="small" id="active-worker-tag-3" style="margin-left:6px;color:var(--accent)"></span></h2>
+      <div class="body">
+
+        <div class="action-group">
+          <h3>发送任务</h3>
+          <textarea id="goal" placeholder="例：打开手机设置应用"></textarea>
+          <button class="primary" onclick="submitTask()" style="width:100%;margin-top:6px">发送任务</button>
+        </div>
+
+        <div class="action-group">
+          <h3>按人设触发</h3>
+          <button class="primary" onclick="runPatrolOnce()" style="width:100%">按人设跑一次 patrol</button>
+        </div>
+
+        <div class="action-group">
+          <h3>任务控制</h3>
+          <div class="action-row">
+            <button class="danger" onclick="cancelTask()" style="flex:1">取消任务</button>
+            <button class="danger" onclick="releaseSession()" style="flex:1">释放 session</button>
+          </div>
+        </div>
+
+        <div id="submit-result" class="small" style="margin-top:8px"></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Modes <span class="small" id="active-worker-tag-4" style="margin-left:6px;color:var(--accent)"></span></h2>
+      <div class="body">
+
+        <div class="action-group">
+          <h3>Supervisor 模式</h3>
+          <div class="action-row">
+            <button onclick="setMode('debug')">debug</button>
+            <button onclick="setMode('waiting')">waiting</button>
+            <button onclick="patrol(true)">patrol on</button>
+            <button onclick="patrol(false)">patrol off</button>
+          </div>
+        </div>
+
+        <div class="action-group">
+          <h3>Runtime 切换</h3>
+          <div class="action-row">
+            <select id="rt-select" onchange="updateSwapButtonState()" style="flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:3px;padding:4px 6px;font-family:inherit;font-size:12px">
+              <option value="local_chrome">local_chrome</option>
+              <option value="cloudmobile">cloudmobile</option>
+              <option value="agentbay">agentbay</option>
+            </select>
+            <button id="swap-btn" onclick="swapRuntime()">切换</button>
+          </div>
+          <div class="small" id="swap-hint" style="margin-top:4px;color:var(--muted)">切 runtime 会释放当前 session，任务运行中拒绝</div>
+        </div>
+
+      </div>
+    </div>
+
+  </div>
+
+  <!-- 右列：实时画面（sticky 吸顶，滚到日志时不被遮） -->
+  <div class="col col-right">
+    <div class="panel">
+      <h2 style="display:flex;align-items:center">
+        Live View
+        <span class="small" id="live-hint" style="margin-left:8px"></span>
+        <button class="back-to-grid" id="back-to-grid" onclick="setViewMode('grid')" style="display:none">← 返回网格</button>
+      </h2>
+      <div class="body" style="padding:0">
+        <!-- 单视图：当前 active worker 的 iframe / img -->
+        <div class="liveview" id="liveview">
+          <div class="placeholder">等待 runtime 信息…<br><br><span style="opacity:.6">云端 session 建立后，用真机扫码登录小红书再发任务</span></div>
+        </div>
+        <!-- 网格视图：所有 worker 的 iframe 并排（display:none，切到 grid 时打开） -->
+        <div class="liveview-grid" id="liveview-grid"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Logs：全宽，位于左右两栏整体的下方；内部 420px 滚动 -->
+<div class="panel logs-panel" style="margin:12px">
+  <h2>Logs <span class="small" id="log-stats" style="margin-left:8px">0 行</span></h2>
+  <div class="body" style="padding:0">
+    <div class="log-toolbar">
+      <input type="text" id="log-filter" placeholder="过滤：trace_id 片段 / 关键词…">
+      <label><input type="checkbox" id="log-info" checked>INFO</label>
+      <label><input type="checkbox" id="log-warning" checked>WARN</label>
+      <label><input type="checkbox" id="log-error" checked>ERROR</label>
+      <label><input type="checkbox" id="log-autoscroll" checked>滚到底</label>
+      <button onclick="clearLogs()" style="padding:3px 10px">清空</button>
+    </div>
+    <div class="logs" id="logs"></div>
+  </div>
+</div>
+
+<script>
+'use strict';
+const els = {
+  hdrMode: document.getElementById('hdr-mode'),
+  conn: document.getElementById('conn'),
+  connText: document.getElementById('conn-text'),
+  rtMode: document.getElementById('rt-mode'),
+  rtBackend: document.getElementById('rt-backend'),
+  rtStrategy: document.getElementById('rt-strategy'),
+  rtImage: document.getElementById('rt-image'),
+  rtSession: document.getElementById('rt-session'),
+  svMode: document.getElementById('sv-mode'),
+  svActive: document.getElementById('sv-active'),
+  svTrace: document.getElementById('sv-trace'),
+  svGoal: document.getElementById('sv-goal'),
+  svElapsed: document.getElementById('sv-elapsed'),
+  liveview: document.getElementById('liveview'),
+  liveHint: document.getElementById('live-hint'),
+  submitResult: document.getElementById('submit-result'),
+  logs: document.getElementById('logs'),
+  logStats: document.getElementById('log-stats'),
+  logFilter: document.getElementById('log-filter'),
+  logInfo: document.getElementById('log-info'),
+  logWarn: document.getElementById('log-warning'),
+  logError: document.getElementById('log-error'),
+  logAuto: document.getElementById('log-autoscroll'),
+};
+
+// Log buffer：保留最近 N 条原始记录，filter 变化时整体重渲染
+const LOG_MAX = 800;
+let logBuffer = [];
+
+function appendLog(payload, ts) {
+  logBuffer.push({payload, ts});
+  if (logBuffer.length > LOG_MAX) logBuffer.splice(0, logBuffer.length - LOG_MAX);
+  const row = renderLogRow(payload, ts);
+  if (row && passesFilter(payload)) {
+    els.logs.appendChild(row);
+    while (els.logs.children.length > LOG_MAX) els.logs.removeChild(els.logs.firstChild);
+    if (els.logAuto.checked) els.logs.scrollTop = els.logs.scrollHeight;
+  }
+  els.logStats.textContent = logBuffer.length + ' 行';
+}
+
+function passesFilter(payload) {
+  const lvl = payload.level || 'INFO';
+  if (lvl === 'INFO' && !els.logInfo.checked) return false;
+  if (lvl === 'WARNING' && !els.logWarn.checked) return false;
+  if (lvl === 'ERROR' && !els.logError.checked) return false;
+  const q = els.logFilter.value.trim().toLowerCase();
+  if (!q) return true;
+  return JSON.stringify(payload).toLowerCase().includes(q);
+}
+
+function renderLogRow(payload, ts) {
+  const t = new Date((ts || Date.now() / 1000) * 1000);
+  const hh = String(t.getHours()).padStart(2, '0');
+  const mm = String(t.getMinutes()).padStart(2, '0');
+  const ss = String(t.getSeconds()).padStart(2, '0');
+  const lvl = payload.level || 'INFO';
+  const trace = payload.trace_id;
+  const msg = payload.msg || payload.message || '';
+  // 把除 level/logger/trace_id/msg/message 之外的字段铺开成 key=value
+  const extras = [];
+  for (const k of Object.keys(payload)) {
+    if (['level', 'logger', 'trace_id', 'msg', 'message'].includes(k)) continue;
+    let v = payload[k];
+    if (typeof v === 'object') v = JSON.stringify(v);
+    extras.push(k + '=' + v);
+  }
+  const row = document.createElement('div');
+  row.className = 'row lvl-' + lvl;
+  row.innerHTML =
+    '<span class="ts">' + hh + ':' + mm + ':' + ss + '</span>' +
+    '<span class="lvl">' + lvl + '</span>' +
+    (trace ? '<span class="trace">[' + escapeHtml(String(trace).slice(0, 8)) + ']</span>' : '') +
+    '<span>' + escapeHtml(msg) + '</span>' +
+    (extras.length ? ' <span class="extra">| ' + escapeHtml(extras.join(' ')) + '</span>' : '');
+  return row;
+}
+
+function rerenderLogs() {
+  els.logs.innerHTML = '';
+  for (const r of logBuffer) {
+    if (passesFilter(r.payload)) {
+      els.logs.appendChild(renderLogRow(r.payload, r.ts));
+    }
+  }
+  if (els.logAuto.checked) els.logs.scrollTop = els.logs.scrollHeight;
+}
+
+function clearLogs() {
+  logBuffer = [];
+  els.logs.innerHTML = '';
+  els.logStats.textContent = '0 行';
+}
+
+
+// ── 双服务路由 ──────────────────────────────────────────
+// BRAIN_URL 非空 = 拆分模式（Session Service 在当前 origin，Brain 在另一个端口）
+// 为空 = 单进程模式（所有 API 走当前 origin，向后兼容）
+let BRAIN_URL = '';
+
+// 发往 Brain Service 的 API 路径前缀（任务、状态、supervisor 控制）
+function brainApi(path) { return (BRAIN_URL || '') + path; }
+// 发往 Session Service 的 API 路径前缀（session、截图、live-url）
+function sessionApi(path) { return path; }
+
+let runtimeMode = null;       // local_chrome / cloudmobile / agentbay
+let liveViewMounted = null;   // 'iframe' | 'img' | null
+let imgRefreshTimer = null;
+// 发了任务但 session 还没建好的 worker 集合；用来在 live view 区显示"session 创建中…"占位
+const pendingWorkers = new Set();
+let fastPollTimer = null;
+
+function markPending(accountId) {
+  if (!accountId) return;
+  pendingWorkers.add(accountId);
+  // 立即渲染占位（不等 refreshRuntime 异步返回，避免 liveViewMounted 状态错位）
+  if (viewMode === 'single' && accountId === (activeAccountId || 'default')) {
+    const lv = document.getElementById('liveview');
+    if (lv) {
+      lv.innerHTML = '<div class="placeholder pending"><span class="dot-load"></span>session 创建中…<br><br><span style="opacity:.6">云手机实例启动通常需要 3-10 秒</span></div>';
+      els.liveHint.textContent = (runtimeMode || '') + '：session 创建中';
+      liveViewMounted = 'pending';
+    }
+  } else if (viewMode === 'grid') {
+    renderLiveGrid();
+  }
+  if (fastPollTimer) return;  // 已经在快速轮询
+  let ticks = 0;
+  fastPollTimer = setInterval(async () => {
+    ticks++;
+    await refreshWorkers();
+    // 查所有 pending 是否已拿到 URL
+    for (const id of Array.from(pendingWorkers)) {
+      const w = workersCache.find(x => x.account_id === id);
+      if (w && w.agentbay && w.agentbay.live_view_url) pendingWorkers.delete(id);
+    }
+    // 所有 pending 就位 / 最多 30s 放弃（失败场景不无限轮）
+    if (pendingWorkers.size === 0 || ticks >= 15) {
+      clearInterval(fastPollTimer);
+      fastPollTimer = null;
+    }
+  }, 2000);
+}
+// 当前激活 worker：所有面板/动作都对它生效。null = 后端 default。
+let activeAccountId = null;
+let workersCache = [];        // 最新一次 /agent/workers 结果
+// Live View 视图模式：'single' / 'grid'
+// 多 worker 时默认 grid；双击某 cell 进 single；点 "← 返回网格" 出 single
+let viewMode = 'init';  // 首次加载由 applyAutoViewMode 根据 worker 数量决定
+let gridMountedSig = '';      // 网格上次挂载的签名（worker URL 集合 hash），变了才重建
+
+// 工具：往所有 fetch 的 query/body 里注入 account_id（仅当 activeAccountId 非空）
+function withAccount(obj) {
+  if (!activeAccountId) return obj;
+  return {...(obj || {}), account_id: activeAccountId};
+}
+function accountQs() {
+  return activeAccountId ? '?account_id=' + encodeURIComponent(activeAccountId) : '';
+}
+
+let rtSelectInitialized = false;
+
+function updateSwapButtonState() {
+  const sel = document.getElementById('rt-select');
+  const btn = document.getElementById('swap-btn');
+  const hint = document.getElementById('swap-hint');
+  const rtMode = document.getElementById('rt-mode');
+  if (!sel || !btn || !runtimeMode) return;
+  const diverged = sel.value !== runtimeMode;
+  if (diverged) {
+    btn.textContent = '切换 →';
+    btn.style.background = 'var(--yellow)';
+    btn.style.borderColor = 'var(--yellow)';
+    btn.style.color = '#1b1500';
+    if (hint) { hint.innerHTML = '⚠️ dropdown 和当前 mode 不一致，<b>点 [切换] 才生效</b>'; hint.style.color = 'var(--yellow)'; }
+    if (rtMode) rtMode.style.fontWeight = '700';
+  } else {
+    btn.textContent = '切换';
+    btn.style.background = '';
+    btn.style.borderColor = '';
+    btn.style.color = '';
+    if (hint) { hint.innerHTML = '切 runtime 会释放当前 session，任务运行中拒绝'; hint.style.color = 'var(--muted)'; }
+    if (rtMode) rtMode.style.fontWeight = '';
+  }
+}
+
+async function refreshRuntime() {
+  try {
+    const r = await fetch(brainApi('/api/v1/agent/runtime') + accountQs());
+    if (!r.ok) throw new Error(r.status);
+    const d = await r.json();
+    runtimeMode = d.mode;
+    els.rtMode.textContent = d.mode;
+    els.rtBackend.textContent = d.backend;
+    els.rtStrategy.textContent = d.strategy.type + ' (' + d.strategy.name + ')';
+    // 只在首次挂载时把下拉框同步到当前 worker 的 mode；之后保留用户的选择，
+    // 切 worker / 周期刷新都不改动它，避免误操作（用户看到的是自己的上次选择）。
+    // 差异由 updateSwapButtonState 在视觉上标红警告。
+    const sel = document.getElementById('rt-select');
+    if (sel && !rtSelectInitialized && d.mode) {
+      sel.value = d.mode;
+      rtSelectInitialized = true;
+    }
+    updateSwapButtonState();
+    if (d.agentbay) {
+      els.rtImage.textContent = d.agentbay.image_id + ' [' + d.agentbay.screenshot_format + ']';
+      els.rtSession.textContent = d.agentbay.session_active
+        ? '✅ active ' + (d.agentbay.screen_size.width || '?') + 'x' + (d.agentbay.screen_size.height || '?')
+        : '⚪️ 未建立';
+    } else {
+      els.rtImage.textContent = '(本地)';
+      els.rtSession.textContent = 'n/a';
+    }
+    mountLiveView(d);
+  } catch (e) {
+    console.error('refreshRuntime fail', e);
+  }
+}
+
+function mountLiveView(rt) {
+  // 网格模式下不挂单视图 iframe，避免和 grid cell iframe 同连一个 session → 2002 冲突
+  if (viewMode === 'grid') {
+    if (imgRefreshTimer) { clearInterval(imgRefreshTimer); imgRefreshTimer = null; }
+    // 清掉可能残留的隐藏 iframe
+    if (liveViewMounted === 'iframe' || liveViewMounted === 'img') {
+      els.liveview.innerHTML = '';
+      els.liveview.dataset.key = '';
+      liveViewMounted = null;
+    }
+    return;
+  }
+  const key = (rt.mode === 'local_chrome' ? 'img' : 'iframe') + '|' + (activeAccountId || 'default');
+  if (rt.mode === 'local_chrome') {
+    if (els.liveview.dataset.key !== key) {
+      els.liveview.innerHTML = '<img id="screenimg" alt="loading screen…">';
+      els.liveHint.textContent = '本地 Chrome 截图（每 2s 刷新）';
+      els.liveview.dataset.key = key;
+      liveViewMounted = 'img';
+      if (imgRefreshTimer) clearInterval(imgRefreshTimer);
+      const refresh = () => {
+        const img = document.getElementById('screenimg');
+        if (img) img.src = '/api/v1/agent/screen.jpg' + accountQs() + (accountQs() ? '&' : '?') + 't=' + Date.now();
+      };
+      refresh();
+      imgRefreshTimer = setInterval(refresh, 2000);
+    }
+  } else {
+    // 云端：iframe 嵌 live_view_url
+    const url = rt.agentbay && rt.agentbay.live_view_url;
+    const sessionActive = rt.agentbay && rt.agentbay.session_active;
+    if (!url) {
+      const isPending = pendingWorkers.has(rt.account_id || activeAccountId);
+      const phKey = isPending ? 'pending' : (sessionActive ? 'url_expired' : 'placeholder');
+      if (liveViewMounted !== phKey) {
+        if (isPending) {
+          els.liveview.innerHTML = '<div class="placeholder pending"><span class="dot-load"></span>session 创建中…<br><br><span style="opacity:.6">云手机实例启动通常需要 3-10 秒</span></div>';
+          els.liveHint.textContent = rt.mode + '：session 创建中';
+        } else if (sessionActive) {
+          els.liveview.innerHTML = '<div class="placeholder">串流地址已过期<br><br><button onclick="doRefreshLiveUrl()" style="padding:6px 18px;border:none;border-radius:4px;background:#1677ff;color:#fff;cursor:pointer;font-size:14px">刷新连接</button></div>';
+          els.liveHint.textContent = rt.mode + '：串流 URL 过期，点击刷新';
+        } else {
+          els.liveview.innerHTML = '<div class="placeholder">云端 session 未建立。先发一个任务即可看到云手机屏幕。</div>';
+          els.liveHint.textContent = rt.mode + '：等待 session';
+        }
+        liveViewMounted = phKey;
+      }
+    } else {
+      const wantKey = key + '|' + url;
+      if (els.liveview.dataset.key !== wantKey) {
+        els.liveview.innerHTML = '<iframe src="' + url + '" allow="clipboard-read; clipboard-write"></iframe>';
+        els.liveview.dataset.key = wantKey;
+        els.liveHint.textContent = rt.mode + '：阿里 Web 串流（含 authcode，30 分钟时效）';
+        liveViewMounted = 'iframe';
+      }
+    }
+    if (imgRefreshTimer) { clearInterval(imgRefreshTimer); imgRefreshTimer = null; }
+  }
+}
+
+async function refreshStatus() {
+  try {
+    const r = await fetch(brainApi('/api/v1/agent/status') + accountQs());
+    if (!r.ok) throw new Error(r.status);
+    const d = await r.json();
+    const mode = d.mode || '—';
+    els.svMode.innerHTML = '<span class="badge ' + mode + '">' + mode + '</span>';
+    els.hdrMode.textContent = mode;
+    els.hdrMode.className = 'badge ' + mode;
+    els.svActive.textContent = d.is_active ? '✅' : '⚪️';
+    els.svTrace.textContent = d.current_trace_id || '—';
+    els.svGoal.textContent = d.current_goal || '—';
+    els.svElapsed.textContent = d.running_seconds + 's';
+  } catch (e) {
+    console.error('refreshStatus fail', e);
+  }
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function connectSSE() {
+  // 单进程模式：连 /api/v1/agent/events（包含所有事件）
+  // 拆分模式：连 Brain SSE（任务事件）+ Session SSE（session 事件）
+  const brainEventsUrl = brainApi('/api/v1/agent/events');
+  const es = new EventSource(brainEventsUrl);
+  es.addEventListener('open', () => {
+    els.conn.classList.add('online');
+    els.connText.textContent = 'SSE 已连接';
+  });
+  es.addEventListener('error', () => {
+    els.conn.classList.remove('online');
+    els.connText.textContent = 'SSE 断线，2s 后重连…';
+    es.close();
+    setTimeout(connectSSE, 2000);
+  });
+
+  // 拆分模式：额外订阅 Session Service 的 SSE（session_active/dead/released 事件）
+  if (BRAIN_URL) {
+    const sessionEs = new EventSource(sessionApi('/api/v1/session/events'));
+    sessionEs.addEventListener('error', () => { sessionEs.close(); setTimeout(() => connectSSE(), 5000); });
+    for (const t of ['runtime_changed']) {
+      sessionEs.addEventListener(t, () => { refreshRuntime(); refreshWorkers(); });
+    }
+    sessionEs.addEventListener('log', e => {
+      let data = {}; try { data = JSON.parse(e.data); } catch (_) { return; }
+      appendLog(data.payload || {}, data.ts);
+    });
+  }
+  // 高层事件仅用于触发状态/runtime 重拉，详情靠下方 Logs 展示
+  for (const t of ['mode_changed', 'task_started', 'task_completed', 'runtime_changed']) {
+    es.addEventListener(t, () => {
+      refreshStatus();
+      if (t !== 'mode_changed') refreshRuntime();
+      if (t === 'runtime_changed') refreshWorkers();  // session 死亡/释放时立即刷新网格
+    });
+  }
+  // 日志事件量大，独立 listener 避免误触发 status/runtime 重拉
+  es.addEventListener('log', e => {
+    let data = {};
+    try { data = JSON.parse(e.data); } catch (_) { return; }
+    appendLog(data.payload || {}, data.ts);
+  });
+}
+
+// 日志过滤器变化时重新渲染（不要重新订阅）
+['input', 'change'].forEach(evt => {
+  document.getElementById('log-filter').addEventListener(evt, rerenderLogs);
+  document.getElementById('log-info').addEventListener(evt, rerenderLogs);
+  document.getElementById('log-warning').addEventListener(evt, rerenderLogs);
+  document.getElementById('log-error').addEventListener(evt, rerenderLogs);
+});
+
+async function postWithAccount(path, extra = {}, target = 'brain') {
+  const base = target === 'session' ? sessionApi(path) : brainApi(path);
+  return fetch(base, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(withAccount(extra)),
+  });
+}
+
+async function setMode(mode) {
+  try {
+    await postWithAccount('/api/v1/agent/mode/' + mode);
+    refreshStatus();
+  } catch (e) { alert('切换失败: ' + e); }
+}
+
+async function patrol(enable) {
+  try {
+    await postWithAccount('/api/v1/agent/patrol', {enable});
+    refreshStatus();
+    refreshWorkers();
+  } catch (e) { alert('巡逻切换失败: ' + e); }
+}
+
+async function cancelTask() {
+  if (!confirm('确认取消当前任务？')) return;
+  try {
+    await postWithAccount('/api/v1/agent/cancel');
+  } catch (e) { alert('取消失败: ' + e); }
+}
+
+async function releaseSession() {
+  // Actions 面板按钮：作用于当前 active worker
+  return releaseSessionFor(activeAccountId);
+}
+
+async function releaseSessionFor(accountId) {
+  const tag = accountId || 'default';
+  if (!confirm('确认关闭 worker=' + tag + '？\n• 任务会被取消\n• session 销毁，登录态丢失\n• 下次发任务需重新扫码登录')) return;
+  const headers = {'Content-Type': 'application/json'};
+  const baseBody = accountId ? {account_id: accountId} : {};
+  els.submitResult.innerHTML = '⏳ ' + escapeHtml(tag) + ' 关闭中…';
+  try {
+    // 1. 永远先打 cancel（无任务时无害；有任务时让 watcher 触发 terminate_task）
+    await fetch('/api/v1/agent/cancel', {method: 'POST', headers, body: JSON.stringify(baseBody)}).catch(() => {});
+    // 2. 4 轮 × 1.2s 等任务退出再 release（agentbay 的 terminate_task 通常 2-5s 内生效）
+    let r, d;
+    for (let i = 0; i < 4; i++) {
+      await new Promise(rsv => setTimeout(rsv, 1200));
+      r = await fetch('/api/v1/agent/session/release', {method: 'POST', headers, body: JSON.stringify(baseBody)});
+      if (r.ok) { d = await r.json(); break; }
+      els.submitResult.innerHTML = '⏳ ' + escapeHtml(tag) + ' 等任务退出 ' + ((i + 1) * 1.2).toFixed(1) + 's…';
+    }
+    // 3. 仍未释放成功 → force=true 强制（teardown 直接销毁 session，可能让进行中的 SDK 调用报错）
+    if (!r.ok) {
+      els.submitResult.innerHTML = '⚡️ ' + escapeHtml(tag) + ' 强制关闭…';
+      r = await fetch('/api/v1/agent/session/release', {method: 'POST', headers, body: JSON.stringify({...baseBody, force: true})});
+      d = await r.json();
+    }
+    if (!r.ok) {
+      els.submitResult.innerHTML = '❌ ' + escapeHtml(tag) + ' 关闭失败: ' + escapeHtml(String(d && d.detail || r.status));
+      return;
+    }
+    els.submitResult.innerHTML = '🛑 ' + escapeHtml(tag) + ' 已关闭';
+    refreshRuntime();
+    refreshWorkers();
+  } catch (e) {
+    els.submitResult.innerHTML = '❌ ' + escapeHtml(tag) + ' 关闭异常: ' + escapeHtml(String(e));
+  }
+}
+
+async function runPatrolOnce() {
+  try {
+    const r = await postWithAccount('/api/v1/agent/scheduled/patrol-once');
+    const d = await r.json();
+    if (!r.ok) { alert('触发失败: ' + (d.detail || r.status)); return; }
+    els.submitResult.innerHTML = '🎯 已触发人设驱动 patrol [' + escapeHtml(d.account_id || '?') + '], trace=' + escapeHtml(d.trace_id);
+    // patrol 也会拉 session；若还没起来 → 标记 pending
+    const target = d.account_id || activeAccountId;
+    const worker = workersCache.find(w => w.account_id === target);
+    if (worker && !(worker.agentbay && worker.agentbay.live_view_url)) {
+      markPending(target);
+    }
+    refreshStatus();
+    refreshRuntime();
+  } catch (e) { alert('触发失败: ' + e); }
+}
+
+async function swapRuntime() {
+  const target = document.getElementById('rt-select').value;
+  if (target === runtimeMode) { alert('已经是 ' + target); return; }
+  if (!confirm('切换到 ' + target + '？\n当前云手机 session（如有）会被释放。')) return;
+  try {
+    const r = await postWithAccount('/api/v1/agent/runtime/mode', {mode: target});
+    const d = await r.json();
+    if (!r.ok) { alert('切换失败: ' + (d.detail || r.status)); return; }
+    refreshRuntime();
+    refreshStatus();
+  } catch (e) { alert('切换失败: ' + e); }
+}
+
+async function submitTask() {
+  // Dashboard 统一走异步：任务立即在后台起，live view / status / logs 自动反馈进度
+  // 想拿同步结果的脚本走 curl POST /api/v1/agent/actions/sync
+  const goal = document.getElementById('goal').value.trim();
+  if (!goal) { alert('请输入目标'); return; }
+  els.submitResult.textContent = '提交中…';
+  const target = activeAccountId || (workersCache[0] && workersCache[0].account_id);
+  try {
+    const r = await postWithAccount('/api/v1/agent/actions', {user_goal: goal});
+    const d = await r.json();
+    els.submitResult.innerHTML = '🚀 已提交 trace=' + escapeHtml(d.trace_id || '?');
+    // 若目标 worker 还没 session，标记 pending 让 live view 显示"创建中"
+    const worker = workersCache.find(w => w.account_id === target);
+    if (worker && !(worker.agentbay && worker.agentbay.live_view_url)) {
+      markPending(target);
+    }
+    refreshStatus();
+    refreshRuntime();
+  } catch (e) {
+    els.submitResult.textContent = '❌ ' + e;
+  }
+}
+
+// 拉 worker 列表 + 渲染 tab bar
+async function refreshWorkers() {
+  try {
+    const r = await fetch(brainApi('/api/v1/agent/workers'));
+    if (!r.ok) throw new Error(r.status);
+    const d = await r.json();
+    workersCache = d.workers || [];
+    // 删 active worker 后或首次：默认指 default
+    if (!activeAccountId || !workersCache.find(w => w.account_id === activeAccountId)) {
+      activeAccountId = d.default_id || (workersCache[0] && workersCache[0].account_id);
+    }
+    renderWorkerTabs();
+    updateActiveWorkerTags();
+    applyAutoViewMode();
+    if (viewMode === 'grid') renderLiveGrid();
+  } catch (e) { console.error('refreshWorkers fail', e); }
+}
+
+function renderWorkerTabs() {
+  const host = document.getElementById('worker-tabs');
+  host.innerHTML = '';
+  if (!workersCache.length) {
+    const ph = document.createElement('span');
+    ph.className = 'small'; ph.style.cssText = 'padding:6px;color:var(--muted)';
+    ph.textContent = '无 worker';
+    host.appendChild(ph);
+  }
+  for (const w of workersCache) {
+    const tab = document.createElement('div');
+    const svMode = (w.supervisor && w.supervisor.mode) || '';
+    const isActive = w.account_id === activeAccountId;
+    tab.className = 'worker-tab' + (isActive ? ' active' : '') +
+      (svMode === 'executing' ? ' exec' : '') +
+      (svMode === 'patrolling' ? ' patrol' : '') +
+      (svMode === 'debug' ? ' debug' : '');
+    const meta = svMode + (w.supervisor && w.supervisor.is_active ? ' / ' + w.supervisor.running_seconds + 's' : '');
+    // 池里只剩一个 worker 时不显示 × （后端也会拒绝）
+    const xBtn = workersCache.length > 1 ? '<span class="x" title="移除 worker">×</span>' : '';
+    tab.innerHTML = '<span class="dot"></span><span class="label">' + escapeHtml(w.display_name || w.account_id) + '</span><span class="meta">' + escapeHtml(meta) + '</span>' + xBtn;
+    tab.onclick = (e) => {
+      if (e.target.classList.contains('x')) { e.stopPropagation(); removeWorker(w.account_id); return; }
+      switchWorker(w.account_id);
+    };
+    host.appendChild(tab);
+  }
+  // +Add 按钮永远在最后
+  const addBtn = document.createElement('button');
+  addBtn.className = 'worker-add-tab';
+  addBtn.textContent = '+';
+  addBtn.title = '新增 worker';
+  addBtn.onclick = () => toggleAddForm();
+  host.appendChild(addBtn);
+}
+
+function toggleAddForm(force) {
+  const form = document.getElementById('worker-add-form');
+  const willShow = force === undefined ? !form.classList.contains('show') : force;
+  form.classList.toggle('show', willShow);
+}
+
+async function createWorkers(count) {
+  try {
+    const r = await fetch(brainApi('/api/v1/agent/workers'), {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({count}),
+    });
+    const d = await r.json();
+    if (!r.ok) { alert('创建失败: ' + (d.detail || r.status)); return; }
+    await refreshWorkers();
+    // 创建即视为"想看多个"，强制切到网格（即便之前用户双击进过单视图）
+    if (workersCache.length > 1) setViewMode('grid');
+    // 单次创建后保持表单展开，方便连续加；用户点 "收起" 关
+  } catch (e) { alert('创建失败: ' + e); }
+}
+
+async function removeWorker(accountId) {
+  if (!confirm('移除 worker ' + accountId + '？\n会自动释放云端 session（停计费），登录态丢失。')) return;
+  try {
+    const r = await fetch(brainApi('/api/v1/agent/workers/' + encodeURIComponent(accountId)), {method: 'DELETE'});
+    const d = await r.json();
+    if (!r.ok) { alert('移除失败: ' + (d.detail || r.status)); return; }
+    // active worker 被删 → 切回 default
+    if (activeAccountId === accountId) activeAccountId = null;
+    refreshWorkers();
+  } catch (e) { alert('移除失败: ' + e); }
+}
+
+function switchWorker(accountId) {
+  if (accountId === activeAccountId) return;
+  activeAccountId = accountId;
+  renderWorkerTabs();
+  updateActiveWorkerTags();
+  refreshRuntime();
+  refreshStatus();
+  if (viewMode === 'grid') updateGridActiveHighlight();
+}
+
+async function doRefreshLiveUrl() {
+  // 手动刷新按钮触发：先显示 loading，然后刷新 URL
+  els.liveview.innerHTML = '<div class="placeholder pending"><span class="dot-load"></span>刷新中…</div>';
+  liveViewMounted = 'refreshing';
+  await refreshLiveUrl(activeAccountId);
+}
+
+let _refreshingLiveUrl = false;
+async function refreshLiveUrl(accountId) {
+  if (_refreshingLiveUrl) return;
+  _refreshingLiveUrl = true;
+  try {
+    const qs = accountId ? '?account_id=' + encodeURIComponent(accountId) : '';
+    const r = await fetch('/api/v1/agent/live-url' + qs);
+    if (!r.ok) return;
+    const d = await r.json();
+    if (!d.refreshed || !d.live_view_url) return;
+    // 更新 workersCache 里的 URL
+    const w = workersCache.find(w => w.account_id === (accountId || 'default'));
+    if (w && w.agentbay) w.agentbay.live_view_url = d.live_view_url;
+    // 刷新后重新触发 runtime/grid 渲染，让 mountLiveView 用新 URL 挂 iframe
+    if (viewMode === 'single' && (accountId || 'default') === (activeAccountId || 'default')) {
+      refreshRuntime();
+    }
+    if (viewMode === 'grid') {
+      const cell = document.querySelector('.liveview-cell[data-account="' + (accountId || 'default') + '"]');
+      if (cell) {
+        const ifr = cell.querySelector('iframe');
+        if (ifr && ifr.src !== d.live_view_url) ifr.src = d.live_view_url;
+      }
+    }
+  } catch (e) { console.warn('refreshLiveUrl failed', e); }
+  finally { _refreshingLiveUrl = false; }
+}
+
+function updateActiveWorkerTags() {
+  // 多 worker 时给面板标题加 "→ active worker 名"，单 worker 时不显示（避免噪音）
+  const tag = workersCache.length > 1 ? '→ ' + (activeAccountId || 'default') : '';
+  for (const id of ['active-worker-tag-1', 'active-worker-tag-2', 'active-worker-tag-3', 'active-worker-tag-4']) {
+    const el = document.getElementById(id);
+    if (el) el.textContent = tag;
+  }
+}
+
+function setViewMode(mode) {
+  if (mode === viewMode) return;
+  viewMode = mode;
+  document.getElementById('liveview').style.display = mode === 'single' ? '' : 'none';
+  document.getElementById('liveview-grid').classList.toggle('show', mode === 'grid');
+  // "返回网格" 仅在多 worker + single 模式时显示
+  const back = document.getElementById('back-to-grid');
+  if (back) back.style.display = (mode === 'single' && workersCache.length > 1) ? '' : 'none';
+  if (mode === 'grid') {
+    renderLiveGrid();
+  } else {
+    refreshRuntime();  // 重新挂载 active worker 的单视图（含新 authCode）
+  }
+}
+
+function applyAutoViewMode() {
+  // 单 worker 强制单视图；多 worker 默认网格（用户双击 cell 进 single 后保持，直到他点返回）
+  if (workersCache.length <= 1) {
+    if (viewMode !== 'single') setViewMode('single');
+  } else if (viewMode === 'single') {
+    // 已经在单视图（用户双击进来的）→ 保持，仅同步 "返回网格" 按钮可见性
+    const back = document.getElementById('back-to-grid');
+    if (back) back.style.display = '';
+  } else {
+    // 默认网格
+    if (viewMode !== 'grid') setViewMode('grid');
+  }
+}
+
+function _gridSignature() {
+  // 签名：account_id + live_view_url + pending 标记。URL 变了或 pending 状态变了才重挂 iframe
+  return workersCache.map(w => {
+    const url = (w.agentbay && w.agentbay.live_view_url) || '';
+    const pending = pendingWorkers.has(w.account_id) ? 'p' : '';
+    return w.account_id + '|' + url + '|' + pending;
+  }).join(';');
+}
+
+function renderLiveGrid() {
+  const sig = _gridSignature();
+  if (sig === gridMountedSig && document.getElementById('liveview-grid').children.length === workersCache.length) {
+    updateGridActiveHighlight();
+    return;
+  }
+  gridMountedSig = sig;
+  const host = document.getElementById('liveview-grid');
+  host.innerHTML = '';
+  for (const w of workersCache) {
+    const cell = document.createElement('div');
+    cell.className = 'liveview-cell' + (w.account_id === activeAccountId ? ' active' : '');
+    cell.dataset.account = w.account_id;
+    const url = w.agentbay && w.agentbay.live_view_url;
+    const meta = (w.supervisor && w.supervisor.mode) || '';
+
+    // cell-header：单击切 active worker，双击进单视图；shutdown 按钮独立 stopPropagation
+    const header = document.createElement('div');
+    header.className = 'cell-header';
+    header.innerHTML =
+      '<span class="label">' + escapeHtml(w.display_name || w.account_id) +
+      '<span class="meta">' + escapeHtml(meta) + '</span></span>' +
+      '<button class="cell-shutdown" title="释放该 session（关机）">⏻</button>';
+    header.onclick = (e) => {
+      if (e.target.classList.contains('cell-shutdown')) return;  // shutdown 自己处理
+      switchWorker(w.account_id);
+    };
+    header.ondblclick = (e) => {
+      if (e.target.classList.contains('cell-shutdown')) return;
+      switchWorker(w.account_id);
+      setViewMode('single');
+    };
+    header.querySelector('.cell-shutdown').onclick = (e) => {
+      e.stopPropagation();
+      releaseSessionFor(w.account_id);
+    };
+
+    cell.appendChild(header);
+    if (url) {
+      const ifr = document.createElement('iframe');
+      ifr.src = url;
+      ifr.setAttribute('allow', 'clipboard-read; clipboard-write');
+      cell.appendChild(ifr);
+    } else {
+      const ph = document.createElement('div');
+      const isPending = pendingWorkers.has(w.account_id);
+      ph.className = isPending ? 'ph pending' : 'ph';
+      ph.innerHTML = isPending
+        ? '<div><span class="dot-load"></span>session 创建中…<br><span style="opacity:.6;font-size:11px">通常 3-10 秒</span></div>'
+        : 'session 未建立<br><span style="opacity:.6">发任务后即可看到屏幕</span>';
+      cell.appendChild(ph);
+    }
+    // 全身点击 overlay：非 active 时覆盖 iframe，接住第一次点击切 active；active 时被 CSS 隐藏
+    const overlay = document.createElement('div');
+    overlay.className = 'cell-overlay';
+    overlay.title = '点击切换到此 worker（再次点击才会操作云手机）';
+    overlay.onclick = () => switchWorker(w.account_id);
+    overlay.ondblclick = () => { switchWorker(w.account_id); setViewMode('single'); };
+    cell.appendChild(overlay);
+    host.appendChild(cell);
+  }
+}
+
+function updateGridActiveHighlight() {
+  for (const cell of document.querySelectorAll('.liveview-cell')) {
+    cell.classList.toggle('active', cell.dataset.account === activeAccountId);
+  }
+}
+
+// ── 网格模式快捷键：方向键切换选中 worker ────────────────
+document.addEventListener('keydown', e => {
+  if (viewMode !== 'grid' || !workersCache.length) return;
+  const arrows = {ArrowLeft: -1, ArrowRight: 1, ArrowUp: -2, ArrowDown: 2, Enter: 0};
+  const delta = arrows[e.key];
+  if (delta === undefined) return;
+  e.preventDefault();
+
+  // Enter / 双击 → 进入单视图
+  if (delta === 0) { setViewMode('single'); return; }
+
+  // 计算当前网格列数（基于实际渲染宽度）
+  const host = document.getElementById('liveview-grid');
+  const cells = host.querySelectorAll('.liveview-cell');
+  if (!cells.length) return;
+  const firstTop = cells[0].getBoundingClientRect().top;
+  let cols = 0;
+  for (const c of cells) { if (c.getBoundingClientRect().top === firstTop) cols++; else break; }
+  cols = Math.max(cols, 1);
+
+  const ids = workersCache.map(w => w.account_id);
+  const curIdx = ids.indexOf(activeAccountId);
+  let nextIdx;
+  if (Math.abs(delta) === 1) {
+    nextIdx = curIdx + delta;  // 左右
+  } else {
+    nextIdx = curIdx + (delta > 0 ? cols : -cols);  // 上下按列数跳
+  }
+  if (nextIdx < 0 || nextIdx >= ids.length) return;
+  switchWorker(ids[nextIdx]);
+});
+
+// ── 启动 ─────────────────────────────────────────────────
+// 先检测是否拆分模式（Session Service 提供 /api/v1/session/config）
+(async function boot() {
+  try {
+    const r = await fetch('/api/v1/session/config');
+    if (r.ok) {
+      const cfg = await r.json();
+      if (cfg.brain_url) BRAIN_URL = cfg.brain_url.replace(/\/+$/, '');
+    }
+  } catch (_) { /* 单进程模式，无 session config 端点 */ }
+
+  await refreshWorkers();
+  refreshRuntime();
+  refreshStatus();
+  connectSSE();
+  setInterval(refreshStatus, 2000);
+  setInterval(refreshRuntime, 10000);
+  setInterval(refreshWorkers, 5000);
+})();
+</script>
+</body>
+</html>

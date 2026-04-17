@@ -35,7 +35,7 @@ async def run_scheduler_loop(sv: Supervisor) -> None:
     """统一调度引擎：根据 daily_schedule 配置按时段分派任务。"""
     from agents.supervisor.supervisor import AgentMode
 
-    logger.info({"msg": "统一调度器开始运行"})
+    logger.info({"msg": "统一调度器开始运行", "account": sv.account_id})
     while True:
         try:
             if sv.mode == AgentMode.EXECUTING:
@@ -48,18 +48,18 @@ async def run_scheduler_loop(sv: Supervisor) -> None:
             now = datetime.now()
             task_key = resolve_scheduled_task(now)
             if task_key is None:
-                logger.info({"msg": f"当前是休息时间 ({now.strftime('%H:%M')})，待机中..."})
+                logger.info({"msg": f"当前是休息时间 ({now.strftime('%H:%M')})，待机中...", "account": sv.account_id})
                 await asyncio.sleep(300)
                 continue
 
             handler = SCHEDULED_JOB_HANDLERS.get(task_key)
             if handler is None:
-                logger.warning({"msg": "未知任务类型", "task_key": task_key})
+                logger.warning({"msg": "未知任务类型", "account": sv.account_id, "task_key": task_key})
                 await asyncio.sleep(60)
                 continue
 
             await handler(sv)
 
         except Exception as e:
-            logger.error({"msg": "调度循环异常", "error": str(e)})
+            logger.error({"msg": "调度循环异常", "account": sv.account_id, "error": str(e)})
             await asyncio.sleep(60)

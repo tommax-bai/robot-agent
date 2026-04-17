@@ -1,0 +1,254 @@
+"""
+SessionManager: 云手机 session 生命周期状态机。
+
+职责单一：管理 AgentBay session 的创建、使用、死亡检测、主动释放、URL 刷新。
+每次状态转换都通过 event_bus 推 SSE 事件，dashboard 秒级感知。
+
+状态机：
+    IDLE ──acquire()──▸ CREATING ──success──▸ ACTIVE
+      ▴                                        │
+      │                              mark_dead() / release()
+      │                                        │
+      └────────────────────────────────────────┘
+"""
+
+from __future__ import annotations
+
+import enum
+import threading
+import time
+from typing import TYPE_CHECKING, Any
+
+import utils.logger as logger
+
+if TYPE_CHECKING:
+    from runtime.event_bus import EventBus
+
+# 阿里返回的"session 已不存在"错误关键字
+_SESSION_DEAD_MARKERS = (
+    "InvalidAppInstanceGroup",
+    "NotContainThisAppInstance",
+    "SessionNotFound",
+    "SessionExpired",
+    "session not found",
+    "session has been released",
+    "session has been deleted",
+    "InstanceGroup",
+)
+
+
+def is_session_dead_error(e: BaseException) -> bool:
+    msg = str(e)
+    return any(marker in msg for marker in _SESSION_DEAD_MARKERS)
+
+
+class SessionState(enum.Enum):
+    IDLE = "idle"
+    CREATING = "creating"
+    ACTIVE = "active"
+
+
+class SessionManager:
+    """per-worker 的云手机 session 生命周期管理器。"""
+
+    # authCode TTL ~30min，提前 5min 刷新
+    _URL_REFRESH_AFTER_SECONDS = 25 * 60
+
+    def __init__(
+        self,
+        *,
+        api_key: str,
+        image_id: str = "mobile_latest",
+        idle_release_timeout: int | None = 600,
+        mode: str = "agentbay",
+        event_bus: EventBus,
+        account_id: str,
+    ):
+        self._api_key = api_key
+        self._image_id = image_id
+        self._idle_release_timeout = idle_release_timeout
+        self._mode = mode
+        self._event_bus = event_bus
+        self._account_id = account_id
+
+        self._lock = threading.Lock()
+        self._state = SessionState.IDLE
+        self._client: Any = None
+        self._session: Any = None
+        self._screen_w: int = 0
+        self._screen_h: int = 0
+        self._resource_url_ts: float = 0.0
+        self._cached_url: str = ""
+
+    # ── 只读属性 ──────────────────────────────────────────────
+
+    @property
+    def state(self) -> SessionState:
+        return self._state
+
+    @property
+    def session_id(self) -> str:
+        if self._session is None:
+            return ""
+        return getattr(self._session, "session_id", "") or ""
+
+    @property
+    def screen_size(self) -> tuple[int, int]:
+        return self._screen_w, self._screen_h
+
+    @property
+    def image_id(self) -> str:
+        return self._image_id
+
+    @property
+    def mode(self) -> str:
+        return self._mode
+
+    def update_screen_size(self, w: int, h: int) -> None:
+        self._screen_w = w
+        self._screen_h = h
+
+    # ── 核心生命周期 ──────────────────────────────────────────
+
+    def acquire(self, trace_id: str) -> Any:
+        """获取 session（懒创建，线程安全）。返回 SDK Session 对象。"""
+        if self._state == SessionState.ACTIVE and self._session is not None:
+            return self._session
+        with self._lock:
+            # double-check
+            if self._state == SessionState.ACTIVE and self._session is not None:
+                return self._session
+            return self._do_create(trace_id)
+
+    def release(self) -> None:
+        """主动释放 session（停计费）。失败只记日志。"""
+        with self._lock:
+            if self._session is None:
+                return
+            sid = self.session_id
+            try:
+                if self._client is not None:
+                    result = self._client.delete(self._session)
+                    ok = bool(getattr(result, "success", True))
+                    logger.info({"msg": f"[{self._mode}] 云手机 session 已释放", "session_id": sid, "ok": ok})
+            except Exception as e:
+                logger.warning({"msg": f"[{self._mode}] 云手机 session 释放失败（将由服务端 idle 回收）", "error": str(e)})
+            self._clear()
+            self._publish("session_released", session_id=sid)
+
+    def mark_dead(self, source: str, reason: str = "", trace_id: str = "") -> None:
+        """被动检测到 session 已死（云端已不存在），清本地引用。"""
+        with self._lock:
+            sid = self.session_id or "?"
+            logger.warning(
+                {
+                    "msg": f"[{self._mode}] 云手机 session 失效，已清理本地引用（来自 {source}）",
+                    "session_id": sid,
+                    "reason": (reason[:160] + "…") if len(reason) > 160 else reason,
+                },
+                trace_id,
+            )
+            self._clear()
+            self._publish("session_dead", session_id=sid, source=source)
+
+    # ── URL 管理 ──────────────────────────────────────────────
+
+    def get_url(self) -> str:
+        """纯缓存读取，不做 API 调用。过期返回空串 → dashboard 显示 placeholder。"""
+        if self._session is None:
+            return ""
+        if not self._cached_url:
+            return ""
+        elapsed = time.time() - self._resource_url_ts
+        if elapsed >= self._URL_REFRESH_AFTER_SECONDS:
+            return ""
+        return self._cached_url
+
+    def refresh_url(self) -> str:
+        """显式刷新串流 URL（调 get_link API），由 /agent/live-url 触发。"""
+        if self._session is None:
+            return ""
+        return self._do_refresh_url(self._cached_url)
+
+    def _do_refresh_url(self, fallback: str) -> str:
+        try:
+            result = self._session.get_link()
+            url = (getattr(result, "data", "") or "") if getattr(result, "success", False) else ""
+            if url:
+                self._cached_url = url
+                self._resource_url_ts = time.time()
+                return url
+        except Exception as e:
+            logger.warning({"msg": f"[{self._mode}] 刷新串流 URL 失败，回退到缓存", "error": str(e)})
+        return fallback
+
+    # ── 内部 ──────────────────────────────────────────────────
+
+    def _do_create(self, trace_id: str) -> Any:
+        """在持锁状态下创建 session。"""
+        try:
+            from agentbay import AgentBay, CreateSessionParams
+        except ImportError as e:
+            raise RuntimeError("未安装 wuying-agentbay-sdk。请执行 `pip install wuying-agentbay-sdk`") from e
+
+        self._state = SessionState.CREATING
+        self._publish("session_creating", trace_id=trace_id)
+
+        logger.info(
+            {
+                "msg": f"[{self._mode}] 正在创建云手机 session",
+                "image_id": self._image_id,
+                "idle_release_timeout": self._idle_release_timeout,
+            },
+            trace_id,
+        )
+
+        client = AgentBay(api_key=self._api_key)
+        params = CreateSessionParams(
+            image_id=self._image_id,
+            idle_release_timeout=self._idle_release_timeout,
+        )
+        result = client.create(params)
+        session = getattr(result, "session", None) or result
+        if session is None:
+            self._state = SessionState.IDLE
+            raise RuntimeError(f"[{self._mode}] 云手机 session 创建失败：返回为空")
+
+        self._client = client
+        self._session = session
+        self._cached_url = getattr(session, "resource_url", "") or ""
+        self._resource_url_ts = time.time()
+        self._state = SessionState.ACTIVE
+
+        resource_url = getattr(session, "resource_url", "") or ""
+        logger.info(
+            {
+                "msg": f"[{self._mode}] 云手机 session 已就绪",
+                "session_id": getattr(session, "session_id", "?"),
+                "live_view_url": resource_url,
+            },
+            trace_id,
+        )
+        self._publish(
+            "session_active",
+            trace_id=trace_id,
+            session_id=getattr(session, "session_id", ""),
+            live_view_url=resource_url,
+        )
+        return session
+
+    def _clear(self) -> None:
+        self._session = None
+        self._client = None
+        self._screen_w = 0
+        self._screen_h = 0
+        self._resource_url_ts = 0.0
+        self._cached_url = ""
+        self._state = SessionState.IDLE
+
+    def _publish(self, event: str, **ctx) -> None:
+        from runtime.event_bus import EVT_RUNTIME_CHANGED, make_event_payload
+        self._event_bus.publish(
+            EVT_RUNTIME_CHANGED,
+            make_event_payload(account=self._account_id, event=event, **ctx),
+        )

@@ -16,6 +16,7 @@ VisionActionStep: 单个子任务的视觉-动作循环。
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 from datetime import datetime
@@ -54,12 +55,14 @@ class VisionActionStep:
         backend: ActionBackend,
         recorder: TraceRecorder | None = None,
         page_cache: PageContextCache | None = None,
+        mode: str = "local_chrome",
     ):
         self._skills = skills
         self._dispatcher = dispatcher
         self._backend = backend
         self._recorder = recorder
         self._page_cache = page_cache
+        self._mode = mode
         cfg = config.agent["operator"]
         self._model = cfg["model"]
         self._client = cfg["llm_client"]
@@ -83,15 +86,15 @@ class VisionActionStep:
         for step in range(self._max_steps):
             ctx.cancel.raise_if_cancelled()
 
-            observation = self._observe(ctx)
+            observation = await self._observe(ctx)
             observation_hash = self._hash_observation(observation)
             page_context = (
                 self._page_cache.get_or_classify(ctx.trace_id, observation) if self._page_cache is not None else None
             )
             if page_context is not None and page_context.page_state != "unknown":
-                logger.info(
+                logger.debug(
                     {
-                        "msg": f"Step {step} 页面识别",
+                        "msg": f"[{self._mode}] Step {step} 页面识别",
                         "page_state": page_context.page_state,
                         "confidence": f"{page_context.confidence:.2f}",
                     },
@@ -103,7 +106,7 @@ class VisionActionStep:
                 last_observation_hash=last_observation_hash,
                 current_observation_hash=observation_hash,
             )
-            decision = self._think(history, observation, last_outcome, feedback, step, ctx)
+            decision = await self._think(history, observation, last_outcome, feedback, step, ctx)
             ctx.cancel.raise_if_cancelled()  # LLM 返回后再检查一次
 
             outcome = await self._dispatcher.dispatch(decision.actions, ctx)
@@ -117,12 +120,12 @@ class VisionActionStep:
             outcome_desc = ", ".join(outcome_parts)
             if outcome.is_finish:
                 logger.info(
-                    {"msg": f"Step {step} 任务完成", "summary": outcome.summary},
+                    {"msg": f"[{self._mode}] Step {step} 任务完成", "summary": outcome.summary},
                     ctx.trace_id,
                 )
             else:
-                logger.info(
-                    {"msg": f"Step {step} 执行结果", "outcome": outcome_desc},
+                logger.debug(
+                    {"msg": f"[{self._mode}] Step {step} 执行结果", "outcome": outcome_desc},
                     ctx.trace_id,
                 )
             if self._recorder is not None:
@@ -164,11 +167,15 @@ class VisionActionStep:
 
         return "\n".join([action_section, common_rules_body, skill_section, constraint_section])
 
-    def _observe(self, ctx: RunContext) -> Observation:
-        image_b64, _, _ = self._backend.screenshot(ctx.trace_id, include_cursor=True)
+    async def _observe(self, ctx: RunContext) -> Observation:
+        # backend.screenshot 对 cloud 模式是 HTTP 阻塞调用（~200-500ms），
+        # 丢线程池避免挂死 asyncio loop，让 dashboard 等其他协程保持响应
+        image_b64, _, _ = await asyncio.to_thread(
+            self._backend.screenshot, ctx.trace_id, True
+        )
         return Observation(image_base64=image_b64, captured_at=datetime.now().isoformat())
 
-    def _think(
+    async def _think(
         self,
         history: ConversationHistory,
         observation: Observation,
@@ -190,10 +197,12 @@ class VisionActionStep:
             {"type": "image_url", "image_url": {"url": image_url}},
         ]
         history.add_user(user_content)
-        logger.info({"msg": "观察到新画面，正在决策下一步动作", "step": step, "text": user_text}, ctx.trace_id)
+        logger.debug({"msg": f"[{self._mode}] 观察到新画面，正在决策下一步动作", "step": step}, ctx.trace_id)
 
         try:
-            parsed, raw = ctx.llm.call_json(
+            # LLM 调用每步 5-20s，是 cloudmobile 模式最大阻塞源，必须丢线程池
+            parsed, raw = await asyncio.to_thread(
+                ctx.llm.call_json,
                 messages=history.to_messages(),
                 model=self._model,
                 client_name=self._client,
@@ -213,9 +222,9 @@ class VisionActionStep:
             raise
 
         actions_desc = " → ".join(self._format_action_brief(a) for a in decision.actions)
-        logger.info(
+        logger.debug(
             {
-                "msg": f"Step {step} 决策",
+                "msg": f"[{self._mode}] Step {step} 决策",
                 "thought": decision.thought,
                 "actions": actions_desc,
             },

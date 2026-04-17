@@ -140,7 +140,7 @@ def _human_click(params, finish, trace_id):
     x, y = llm_to_screen(float(x_val), float(y_val))
     jx, jy = _jitter_offset(2)
 
-    logger.info(f"human click → ({x}, {y})")
+    logger.debug({"msg": f"human click → ({x}, {y})"})
     _human_move(x + jx, y + jy)
     _pre_action_pause()
     pyautogui.click()
@@ -176,7 +176,7 @@ def _human_move_action(params, finish, trace_id):
     y_val = get_param(params, "y")
     x, y = llm_to_screen(float(x_val), float(y_val))
 
-    logger.info(f"human move → ({x}, {y})")
+    logger.debug({"msg": f"human move → ({x}, {y})"})
     _human_move(x, y)
     # 移到目标后短暂悬停，模拟人在看悬浮提示
     time.sleep(random.uniform(0.1, 0.3))

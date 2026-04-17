@@ -42,6 +42,10 @@ class ActionDispatcher:
         self._skills = skills
         self._backend = backend
 
+    def set_backend(self, backend: ActionBackend) -> None:
+        """替换底层 ActionBackend（用于 runtime mode 热切换）。"""
+        self._backend = backend
+
     async def dispatch(self, actions: list[Action], ctx: RunContext) -> ActionOutcome:
         results: list[ActionResult] = []
 
@@ -54,9 +58,9 @@ class ActionDispatcher:
                 return ActionOutcome.finished(summary, results)
 
             if self._skills.has_tool(action.method):
-                result = self._dispatch_skill_tool(action, ctx)
+                result = await self._dispatch_skill_tool(action, ctx)
             else:
-                result = self._dispatch_atomic(action, ctx)
+                result = await self._dispatch_atomic(action, ctx)
 
             results.append(result)
 
@@ -66,13 +70,16 @@ class ActionDispatcher:
 
         return ActionOutcome.continuing(results)
 
-    def _dispatch_skill_tool(self, action: Action, ctx: RunContext) -> ActionResult:
+    async def _dispatch_skill_tool(self, action: Action, ctx: RunContext) -> ActionResult:
         logger.info(
             {"msg": "执行动态工具", "method": action.method, "params": action.params},
             ctx.trace_id,
         )
         try:
-            payload = self._skills.invoke_tool(action.method, action.params, trace_id=ctx.trace_id)
+            # skill 脚本多半含同步 IO（selenium/网络/文件），丢线程池别堵 loop
+            payload = await asyncio.to_thread(
+                self._skills.invoke_tool, action.method, action.params, trace_id=ctx.trace_id
+            )
             return ActionResult(method=action.method, ok=True, payload=payload)
         except CancelledError:
             raise
@@ -89,9 +96,11 @@ class ActionDispatcher:
             )
             return ActionResult(method=action.method, ok=False, message=str(e))
 
-    def _dispatch_atomic(self, action: Action, ctx: RunContext) -> ActionResult:
+    async def _dispatch_atomic(self, action: Action, ctx: RunContext) -> ActionResult:
         try:
-            raw = self._backend.execute_action(
+            # backend.execute_action 对 cloud 模式是 HTTP 同步调用，必须丢线程
+            raw = await asyncio.to_thread(
+                self._backend.execute_action,
                 ctx.trace_id,
                 {"method": action.method, "params": action.params},
             )

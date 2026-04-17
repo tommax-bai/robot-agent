@@ -91,8 +91,8 @@ model = {
 
 # 智能体大脑与灵感配置
 agent = {
-    "default_mode": "patrolling",
-    # "default_mode": "waiting",
+    # "default_mode": "patrolling",
+    "default_mode": "waiting",
     # E1 - agent_state 各字段的存储上限
     "state_limits": {
         "inspiration_pool": 30,
@@ -170,21 +170,54 @@ agent = {
     "storage": {
         "state_file": "data/agent_state.json",
         "save_titles_to_local": True,
+        "cleanup": {
+            "enabled": _env("AGENT_CLEANUP_ENABLED", "true").lower() != "false",
+            "max_age_days": int(_env("AGENT_CLEANUP_MAX_AGE_DAYS", "7")),
+        },
     },
-    # E1 - 执行运行时（决定 backend / 决策策略的组合）
+    # E1 - 执行运行时（决定 backend / 决策策略的组合，可 per-worker 热切换）
     # mode 可选：
-    #   "local_chrome"  — 本地 macOS Chrome（PyAutoGUI + 自家 VLM）
-    #   "cloud_vision"  — 阿里无影云手机 + 自家 VLM
-    #   "cloud_aliyun"  — 阿里无影云手机 + 阿里 mobile_use Agent（暂未启用）
+    #   "local_chrome"   — 本地 macOS Chrome（PyAutoGUI + 自家 VLM）
+    #   "cloudmobile"   — AgentBay 云手机 + 自家 VLM（VisionActionStep 循环）
+    #   "agentbay" — AgentBay 云手机 + AgentBay 内置 mobile_use Agent（委托黑盒）
     "runtime": {
         "mode": _env("AGENT_RUNTIME_MODE", "local_chrome"),
         "agentbay": {
             "api_key": _env("AGENTBAY_API_KEY"),
             "image_id": _env("AGENTBAY_IMAGE_ID", "mobile_latest"),
-            # 截图压缩：jpeg 体积小，VLM 输入更省 token；png 无损但更大
+            # 截图压缩：jpeg 体积小，VLM 输入更省 token;png 无损但更大
             "screenshot_format": _env("AGENTBAY_SCREENSHOT_FORMAT", "jpeg"),
+            # 阿里端 idle 自动回收的超时秒数；防止 SIGKILL 留下的孤儿无限计费。
+            # None 走阿里默认（套餐定）；自己设建议 600 (10min) 起步。
+            "idle_release_timeout": int(_env("AGENTBAY_IDLE_RELEASE_TIMEOUT", "600") or "600"),
         },
+        # 启动时自动清理上一次进程遗留的 AgentBay session。
+        # ⚠️ 仅在"一个 API key 配一个 agent 进程"时启用；如果同 key 跑多副本会互踢。
+        "auto_cleanup_orphans_on_startup": _env("AGENT_AUTO_CLEANUP_ORPHANS", "true").lower() != "false",
+        # 拆分部署：Brain Service 通过此 URL 调用 Session Service。
+        # 留空 = 单进程模式（向后兼容）。
+        "session_service_url": _env("SESSION_SERVICE_URL", ""),
+        "session_service_api_key": _env("SESSION_SERVICE_API_KEY", ""),
     },
+    # E1 - 多账号矩阵（空列表则退化为单 default worker；dashboard 也支持运行时 POST /agent/workers 动态加）
+    # 每个 account 字段：
+    #   id (str, 必填)              — 账号唯一标识，影响日志 trace 前缀和 state 路径
+    #   display_name (str, 可选)    — dashboard 展示名
+    #   image_id (str, 可选)        — AgentBay 镜像 ID，缺省走全局 runtime.agentbay.image_id
+    #                                 （通常都是 "mobile_latest"，登录在 session 创建后人工扫码完成）
+    #   screenshot_format (可选)    — 覆盖 runtime.agentbay.screenshot_format
+    #   state_file (str, 可选)      — 覆盖 state 文件路径，默认 data/accounts/{id}/agent_state.json
+    #   mode (str, 可选)            — 覆盖初始 runtime.mode，后续可通过 dashboard 热切换
+    #   description (str, 可选)     — 备注
+    #
+    # 登录流程：每个 worker 第一次发任务时拉起一个全新 AgentBay session（云端 Android）。
+    # 通过 dashboard 的 live view 打开该 session 的串流页，**用真机扫码登录小红书**。
+    # session 销毁后登录态丢失，下次重新扫码（不做镜像快照、不做自动登录）。
+    "accounts": [
+        # 示例（注释掉，按需启用）：
+        # {"id": "acct-a", "display_name": "导航员-A"},
+        # {"id": "acct-b", "display_name": "导航员-B"},
+    ],
 }
 
 
@@ -256,11 +289,17 @@ _REQUIRED_SCHEMA = [
     # agent.storage
     ("agent.storage.state_file", str),
     ("agent.storage.save_titles_to_local", bool),
+    ("agent.storage.cleanup.enabled", bool),
+    ("agent.storage.cleanup.max_age_days", int),
     # agent.runtime
     ("agent.runtime.mode", str),
     ("agent.runtime.agentbay.api_key", str),
     ("agent.runtime.agentbay.image_id", str),
     ("agent.runtime.agentbay.screenshot_format", str),
+    ("agent.runtime.agentbay.idle_release_timeout", int),
+    ("agent.runtime.auto_cleanup_orphans_on_startup", bool),
+    # agent.accounts (空列表时退化为单 default worker；非空时每项必须含 id)
+    ("agent.accounts", list),
 ]
 
 

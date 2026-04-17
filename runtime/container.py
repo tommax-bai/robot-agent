@@ -1,44 +1,38 @@
 """
 AppContainer: 应用启动时的依赖注入容器。
-所有 agent / service / tool 在此处构造并连线。
+
+职责拆分：
+- 共享层（self.* 直接持有）：LLM 客户端、技能/意图/页面词表、recipe 仓库、
+  事件总线、Planner 等所有 worker 共用的资源
+- Worker 层（self.workers）：每个账号一份独立的 backend / dispatcher /
+  vision_step / recipe_operator / strategy / subtask_runner / operator /
+  supervisor / state，由 WorkerPool 统一管理。支持运行时动态增删。
+
+向后兼容：`container.supervisor` / `container.backend` / `container.strategy`
+等老属性以 @property shortcut 形式保留，转发到 `workers.default()`，
+老代码（早期 API 路由、测试脚本）零改动也能跑。
 """
 
 from __future__ import annotations
 
 import config
-from agents.operator import (
-    ActionDispatcher,
-    AliyunMobileAgentStrategy,
-    Operator,
-    RecipeOperator,
-    SubtaskRunner,
-    SubtaskStrategy,
-    VisionActionStep,
-)
 from agents.planner.planner import Planner
-from agents.strategist import Strategist
-from agents.supervisor.supervisor import Supervisor
+from runtime.event_bus import EventBus
+from runtime.worker import Worker, build_backend, build_session_mgr
+from runtime.worker_pool import WorkerPool
 from services.action_memory import BehaviorSummarizer, RecipeStore, TraceRecorder
-from services.agent_state import AgentStateRepo, JsonFileStateRepo
+from services.agent_state import JsonFileStateRepo
 from services.intent_registry import IntentRegistry
 from services.skill_registry import SkillRegistry
 from services.vision import LlmPageClassifier, LocalPageMatcher, PageContextCache, PageRegistry, VisualLocator
-from tools.backends import ActionBackend, AgentBayBackend, MacOSChromeBackend
 from tools.llm_tool import LlmTool
 
 
 class AppContainer:
-    """
-    应用级单例：在 app.py 启动时构造一次。
-    持有所有 agent + service + tool 的实例引用。
-    """
+    """应用级单例：在 app.py 启动时构造一次。"""
 
     def __init__(self):
-        # ── 基础设施 ───────────────────────────────────────────
-        self.state: AgentStateRepo = JsonFileStateRepo(
-            file_path=config.agent["storage"]["state_file"],
-            limits=config.agent["state_limits"],
-        )
+        # ── 共享基础设施（所有 worker 共用） ────────────────────────
         self.llm = LlmTool()
         self.skills = SkillRegistry("skills")
         self.intents = IntentRegistry()
@@ -62,101 +56,180 @@ class AppContainer:
         self.recipe_store = RecipeStore()
         self.trace_recorder = TraceRecorder()
         self.behavior_summarizer = BehaviorSummarizer(llm=self.llm, intents=self.intents)
-        # 执行后端：按 agent.runtime.mode 选择
-        self.backend: ActionBackend = _build_backend()
-
-        # ── Agents (按依赖顺序) ────────────────────────────────
-        self.strategist = Strategist(state=self.state, llm=self.llm)
+        self.event_bus = EventBus()
         self.planner = Planner(skills=self.skills, intents=self.intents)
-        self.dispatcher = ActionDispatcher(skills=self.skills, backend=self.backend)
-        self.vision_step = VisionActionStep(
-            skills=self.skills,
-            dispatcher=self.dispatcher,
-            backend=self.backend,
-            recorder=self.trace_recorder,
-            page_cache=self.page_context_cache,
-        )
-        self.recipe_operator = RecipeOperator(
-            dispatcher=self.dispatcher,
-            recipes=self.recipe_store,
-            page_cache=self.page_context_cache,
-            locator=self.visual_locator,
-            backend=self.backend,
-            recorder=self.trace_recorder,
-        )
-        # 子任务执行策略：local_chrome / cloud_vision 都用自家视觉循环；
-        # cloud_aliyun 把整个子任务委托给阿里 mobile_use Agent。
-        self.strategy: SubtaskStrategy = _build_strategy(
-            backend=self.backend,
-            vision_step=self.vision_step,
-        )
-        self.subtask_runner = SubtaskRunner(
-            strategy=self.strategy,
-            recipe_operator=self.recipe_operator,
-            behavior_summarizer=self.behavior_summarizer,
-            max_resumes=2,
-        )
-        self.operator = Operator(
-            planner=self.planner,
-            runner=self.subtask_runner,
-        )
-        self.supervisor = Supervisor(
-            operator=self.operator,
-            strategist=self.strategist,
-            state=self.state,
+
+        # ── 启动时孤儿 session 清理（防 SIGKILL 留下未释放实例无限计费）
+        # 仅 cloud 模式 + 配置开启时执行；本地 Chrome 模式无 session 概念
+        runtime_cfg = config.agent["runtime"]
+        # remote 模式下由 Session Service 负责孤儿清理
+        if (
+            runtime_cfg["mode"] != "local_chrome"
+            and not runtime_cfg.get("session_service_url")
+            and runtime_cfg.get("auto_cleanup_orphans_on_startup")
+        ):
+            from tools.backends import cleanup_orphan_sessions
+
+            cleanup_orphan_sessions(runtime_cfg["agentbay"]["api_key"])
+
+        # ── 启动时旧数据文件清理 ─────────────────────────────────
+        cleanup_cfg = config.agent["storage"].get("cleanup", {})
+        if cleanup_cfg.get("enabled", False):
+            from utils.data_cleanup import cleanup_old_files
+
+            max_age = cleanup_cfg.get("max_age_days", 7)
+            total_cleaned = 0
+            total_cleaned += cleanup_old_files("data/action_traces", max_age_days=max_age, extensions=(".jsonl",))
+            total_cleaned += cleanup_old_files("history", max_age_days=max_age, extensions=(".md",))
+            total_cleaned += cleanup_old_files("data", max_age_days=max_age, extensions=(".jpeg", ".jpg"))
+            if total_cleaned > 0:
+                import utils.logger as logger
+                logger.info({"msg": "启动清理旧数据文件完成", "deleted_files": total_cleaned, "max_age_days": max_age})
+
+        # ── Worker 池 ─────────────────────────────────────────────
+        # config.agent["accounts"] 非空 → 每项一个 worker
+        # 空 → 退化为单 default worker，使用全局 storage / runtime 配置
+        self.workers = WorkerPool()
+        accounts_cfg = config.agent.get("accounts") or []
+        if accounts_cfg:
+            for i, acct in enumerate(accounts_cfg):
+                if not acct.get("id"):
+                    raise RuntimeError(f"agent.accounts[{i}] 缺少必填字段 'id'")
+                self.workers.add(self._build_worker(acct), default=(i == 0))
+        else:
+            self.workers.add(self._build_worker(None), default=True)
+
+    def _build_worker(self, account_cfg: dict | None) -> Worker:
+        account_id = (account_cfg or {}).get("id") or "default"
+        # 新 worker 继承全局 config 里的 mode 作为起始模式；之后 swap 只影响自己
+        mode = (account_cfg or {}).get("mode") or config.agent["runtime"]["mode"]
+        state_file = self._state_file_for(account_cfg)
+        state = JsonFileStateRepo(file_path=state_file, limits=config.agent["state_limits"])
+        session_mgr = build_session_mgr(mode, account_cfg, self.event_bus, account_id)
+        backend = build_backend(mode, account_cfg, session_mgr=session_mgr)
+        return Worker(
+            account_id=account_id,
+            mode=mode,
+            state=state,
+            session_mgr=session_mgr,
+            backend=backend,
             llm=self.llm,
+            skills=self.skills,
+            page_context_cache=self.page_context_cache,
+            visual_locator=self.visual_locator,
+            recipe_store=self.recipe_store,
+            trace_recorder=self.trace_recorder,
+            behavior_summarizer=self.behavior_summarizer,
+            event_bus=self.event_bus,
+            planner=self.planner,
+            account_cfg=account_cfg,
         )
 
+    @staticmethod
+    def _state_file_for(account_cfg: dict | None) -> str:
+        """决定 state 文件路径：
+        - 显式 account_cfg.state_file 优先
+        - 否则按账号 id 隔离到 data/accounts/{id}/agent_state.json
+        - 单 default worker 退回到 storage.state_file（保持单账号项目兼容）
+        """
+        if account_cfg:
+            if account_cfg.get("state_file"):
+                return account_cfg["state_file"]
+            return f"data/accounts/{account_cfg['id']}/agent_state.json"
+        return config.agent["storage"]["state_file"]
 
-def _build_backend() -> ActionBackend:
-    """根据 config.agent.runtime.mode 构造对应后端。
+    def add_worker(self, account_cfg: dict, *, start_scheduler: bool = True) -> Worker:
+        """运行时新增一个 worker（dashboard +Add 按钮触发）。
 
-    cloud_aliyun 模式底层仍需 AgentBay session 来执行原子动作（recipe 快路径
-    + Strategy 兜底场景），所以同样返回 AgentBayBackend；与 cloud_vision 的
-    差异在 _build_strategy 中体现。
-    """
-    runtime_cfg = config.agent["runtime"]
-    mode = runtime_cfg["mode"]
+        - account_cfg.id 必填且不能与现有 worker 冲突
+        - 默认自动启动该 worker 的 scheduler（与 lifespan 行为一致）
+        - 注意：动态新增不写回 config.agent.accounts，进程重启后消失
+        """
+        if not account_cfg.get("id"):
+            raise ValueError("account_cfg 缺少必填字段 'id'")
+        worker = self._build_worker(account_cfg)
+        self.workers.add(worker, default=False)
+        if start_scheduler:
+            worker.supervisor.start_scheduler()
+        return worker
 
-    match mode:
-        case "local_chrome":
-            return MacOSChromeBackend()
-        case "cloud_vision" | "cloud_aliyun":
-            ab = runtime_cfg["agentbay"]
-            return AgentBayBackend(
-                api_key=ab["api_key"],
-                image_id=ab["image_id"],
-                screenshot_format=ab["screenshot_format"],
-            )
-        case _:
-            raise RuntimeError(
-                f"未知 agent.runtime.mode={mode!r}，可选值: local_chrome / cloud_vision / cloud_aliyun"
-            )
+    def remove_worker(self, account_id: str) -> Worker:
+        """运行时移除 worker，并 release 其云端 session。
 
+        失败场景由 WorkerPool.remove 抛出：
+        - KeyError: 不存在
+        - RuntimeError: 是最后一个 / 当前任务活跃
+        """
+        worker = self.workers.remove(account_id)
+        # 停 scheduler 循环
+        try:
+            import asyncio as _aio
 
-def _build_strategy(
-    *,
-    backend: ActionBackend,
-    vision_step: VisionActionStep,
-) -> SubtaskStrategy:
-    """根据 mode 选择子任务执行策略。
+            if worker.supervisor._scheduler_task and not worker.supervisor._scheduler_task.done():
+                worker.supervisor._scheduler_task.cancel()
+        except Exception:
+            pass
+        # 释放云端 session
+        try:
+            worker.shutdown()
+        except Exception:
+            pass
+        return worker
 
-    - local_chrome / cloud_vision: 自家 VLM 视觉循环（VisionActionStep）
-    - cloud_aliyun: 委托给阿里 mobile_use Agent
-    """
-    mode = config.agent["runtime"]["mode"]
+    # ─── 向后兼容 shortcut（指向 default worker） ─────────────────
+    # 老代码通过 container.supervisor / .backend 访问，这些 property 保证不破坏
 
-    match mode:
-        case "local_chrome" | "cloud_vision":
-            return vision_step
-        case "cloud_aliyun":
-            if not isinstance(backend, AgentBayBackend):
-                raise RuntimeError(
-                    f"cloud_aliyun 模式必须使用 AgentBayBackend，实际为 {type(backend).__name__}"
-                )
-            return AliyunMobileAgentStrategy(backend=backend)
-        case _:
-            raise RuntimeError(f"未知 agent.runtime.mode={mode!r}")
+    @property
+    def default_worker(self) -> Worker:
+        return self.workers.default()
+
+    @property
+    def supervisor(self):
+        return self.default_worker.supervisor
+
+    @property
+    def backend(self):
+        return self.default_worker.backend
+
+    @property
+    def strategy(self):
+        return self.default_worker.strategy
+
+    @property
+    def dispatcher(self):
+        return self.default_worker.dispatcher
+
+    @property
+    def vision_step(self):
+        return self.default_worker.vision_step
+
+    @property
+    def recipe_operator(self):
+        return self.default_worker.recipe_operator
+
+    @property
+    def subtask_runner(self):
+        return self.default_worker.subtask_runner
+
+    @property
+    def operator(self):
+        return self.default_worker.operator
+
+    @property
+    def strategist(self):
+        return self.default_worker.strategist
+
+    @property
+    def state(self):
+        return self.default_worker.state
+
+    # ─── runtime mode hot-swap：转发到 default worker（向后兼容）──
+    # 真正想切某个特定 worker 的 mode 应该直接调 worker.swap_runtime_mode，
+    # API 层的 POST /agent/runtime/mode 已经支持 account_id 参数。
+
+    async def swap_runtime_mode(self, new_mode: str) -> dict:
+        """转发到 default worker（老代码兼容入口）。"""
+        return await self.default_worker.swap_runtime_mode(new_mode)
 
 
 # 模块级单例（启动后由 app.py 设置）

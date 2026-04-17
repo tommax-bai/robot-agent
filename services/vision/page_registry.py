@@ -214,7 +214,8 @@ class PageRegistry:
                 for page_state, record in sorted(pages.items())
             },
         }
-        self._path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        from utils.atomic_write import atomic_write_text
+        atomic_write_text(self._path, json.dumps(payload, ensure_ascii=False, indent=2))
 
 
 def _merge_limited(existing: list[str], new_items: list[str], limit: int) -> list[str]:

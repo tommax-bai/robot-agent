@@ -42,6 +42,7 @@ async def run_patrol_job(sv: Supervisor) -> None:
         logger.warning(
             {
                 "msg": "巡逻目标生成失败，跳过本轮",
+                "account": sv.account_id,
                 "error": str(e),
                 "backoff_seconds": _STRATEGIST_FAILURE_BACKOFF,
             },
@@ -50,18 +51,18 @@ async def run_patrol_job(sv: Supervisor) -> None:
         await asyncio.sleep(_STRATEGIST_FAILURE_BACKOFF)
         return
 
-    logger.info({"msg": "启动巡逻任务", "goal": goal}, trace_id)
+    logger.info({"msg": "启动巡逻任务", "account": sv.account_id, "goal": goal}, trace_id)
     task = Task(kind="patrol", goal=goal)
     result = await sv.execute_scheduled_task(task, trace_id=trace_id)
 
     if result.summary:
         harvest_knowledge(result.summary, trace_id, sv.state)
 
-    logger.info({"msg": "一轮巡逻完成", "ok": result.ok}, trace_id)
+    logger.info({"msg": "一轮巡逻完成", "account": sv.account_id, "ok": result.ok}, trace_id)
 
     rest_range = config.agent["schedule"]["patrol_rest_between_rounds"]
     wait = random.randint(rest_range[0], rest_range[1])
-    logger.info({"msg": f"巡逻休息 {wait}秒 ({wait / 60:.1f}分钟)"})
+    logger.info({"msg": f"巡逻休息 {wait}秒 ({wait / 60:.1f}分钟)", "account": sv.account_id})
     await asyncio.sleep(wait)
 
 
@@ -69,10 +70,10 @@ async def _run_simple_job(sv: Supervisor, task_key: str, label: str) -> None:
     """通用简单任务（dm/cr）：直接读 config.task_goals，无需 strategist。"""
     trace_id = f"{task_key}-{uuid.uuid4().hex[:8]}"
     goal = config.agent["schedule"]["task_goals"][task_key]
-    logger.info({"msg": f"启动{label}任务", "goal": goal}, trace_id)
+    logger.info({"msg": f"启动{label}任务", "account": sv.account_id, "goal": goal}, trace_id)
     task = Task(kind=task_key, goal=goal)  # type: ignore[arg-type]
     result = await sv.execute_scheduled_task(task, trace_id=trace_id)
-    logger.info({"msg": f"{label}处理完成", "ok": result.ok}, trace_id)
+    logger.info({"msg": f"{label}处理完成", "account": sv.account_id, "ok": result.ok}, trace_id)
     await asyncio.sleep(60)
 
 
@@ -90,7 +91,7 @@ async def run_post_job(sv: Supervisor) -> None:
     today_posts = snapshot["daily_stats"]["posts_count"]
     max_posts = config.agent["schedule"]["max_posts_per_day"]
     if today_posts >= max_posts:
-        logger.info({"msg": f"今日已发布 {today_posts}/{max_posts} 篇，本时段空闲"})
+        logger.info({"msg": f"今日已发布 {today_posts}/{max_posts} 篇，本时段空闲", "account": sv.account_id})
         await asyncio.sleep(_POST_COLD_START_BACKOFF)
         return
 
@@ -99,6 +100,7 @@ async def run_post_job(sv: Supervisor) -> None:
         logger.info(
             {
                 "msg": "冷启动期，跳过发帖，等待知识积累",
+                "account": sv.account_id,
                 "knowledge": evo.total_knowledge,
                 "threshold": _POST_COLD_START_THRESHOLD,
             }
@@ -117,6 +119,7 @@ async def run_post_job(sv: Supervisor) -> None:
         logger.warning(
             {
                 "msg": "发帖目标生成失败，跳过本轮",
+                "account": sv.account_id,
                 "error": str(e),
                 "backoff_seconds": _STRATEGIST_FAILURE_BACKOFF,
             },
@@ -125,7 +128,7 @@ async def run_post_job(sv: Supervisor) -> None:
         await asyncio.sleep(_STRATEGIST_FAILURE_BACKOFF)
         return
 
-    logger.info({"msg": "启动发帖任务", "goal": goal}, trace_id)
+    logger.info({"msg": "启动发帖任务", "account": sv.account_id, "goal": goal}, trace_id)
     task = Task(kind="post", goal=goal)
     result = await sv.execute_scheduled_task(task, trace_id=trace_id)
 
@@ -134,7 +137,7 @@ async def run_post_job(sv: Supervisor) -> None:
     if result.summary:
         harvest_knowledge(result.summary, trace_id, sv.state)
 
-    logger.info({"msg": "发帖任务完成", "ok": result.ok}, trace_id)
+    logger.info({"msg": "发帖任务完成", "account": sv.account_id, "ok": result.ok}, trace_id)
     await asyncio.sleep(_POST_AFTER_BACKOFF)
 
 

@@ -28,6 +28,7 @@ from tools.cleanup import cleanup_chrome_environment
 if TYPE_CHECKING:
     from agents.operator.operator import Operator
     from agents.strategist import Strategist
+    from runtime.event_bus import EventBus
     from services.agent_state import AgentStateRepo
     from tools.llm_tool import LlmTool
 
@@ -65,21 +66,29 @@ class Supervisor:
         strategist: Strategist,
         state: AgentStateRepo,
         llm: LlmTool,
+        event_bus: EventBus | None = None,
+        account_id: str = "default",
     ):
         self._operator = operator
         self._strategist = strategist
         self._state = state
         self._llm = llm
+        self._events = event_bus
+        self._account_id = account_id
 
         self._mode = AgentMode.PATROLLING if config.agent["default_mode"] == "patrolling" else AgentMode.WAITING
 
         self._current_run: ActiveRun | None = None
         self._scheduler_task: asyncio.Task | None = None
 
-        logger.info({"msg": "Supervisor 初始化完成", "mode": self._mode.value})
+        logger.info({"msg": "Supervisor 初始化完成", "account": self._account_id, "mode": self._mode.value})
 
     # ── 公开依赖访问 ──────────────────────────────────────────
     # scheduler/scheduled_jobs 等子组件通过这些属性获取依赖，避免触碰私有字段
+
+    @property
+    def account_id(self) -> str:
+        return self._account_id
 
     @property
     def state(self) -> AgentStateRepo:
@@ -88,6 +97,14 @@ class Supervisor:
     @property
     def strategist(self) -> Strategist:
         return self._strategist
+
+    @property
+    def current_run(self) -> ActiveRun | None:
+        return self._current_run
+
+    def has_active_task(self) -> bool:
+        """当前是否有任务在执行。"""
+        return self._current_run is not None
 
     def make_ctx(self, trace_id: str) -> RunContext:
         """为子组件构造一个干净的 RunContext（独立的 cancel token）"""
@@ -107,7 +124,11 @@ class Supervisor:
     def set_mode(self, mode: AgentMode) -> None:
         old = self._mode
         self._mode = mode
-        logger.info({"msg": "Agent 模式切换", "old": old.value, "new": mode.value})
+        logger.info({"msg": "Agent 模式切换", "account": self._account_id, "old": old.value, "new": mode.value})
+        if self._events is not None:
+            from runtime.event_bus import EVT_MODE_CHANGED, make_event_payload
+
+            self._events.publish(EVT_MODE_CHANGED, make_event_payload(old=old.value, new=mode.value))
         if mode in (AgentMode.DEBUG, AgentMode.WAITING) and self._current_run:
             self._current_run.ctx.cancel.cancel(f"mode→{mode.value}")
 
@@ -118,7 +139,7 @@ class Supervisor:
             from agents.supervisor.scheduler import run_scheduler_loop
 
             self._scheduler_task = asyncio.create_task(run_scheduler_loop(self))
-            logger.info({"msg": "统一调度器已启动"})
+            logger.info({"msg": "统一调度器已启动", "account": self._account_id})
 
     def request_cancel(self, reason: str = "external") -> None:
         """非阻塞地请求停止当前一切活动：调度循环 + 当前任务的 cancel token。
@@ -133,7 +154,7 @@ class Supervisor:
 
     async def shutdown(self) -> None:
         """优雅关闭：取消调度循环、终止当前任务、等待退出"""
-        logger.info({"msg": "Supervisor 正在关闭"})
+        logger.info({"msg": "Supervisor 正在关闭", "account": self._account_id})
         # 1. 取消调度循环
         if self._scheduler_task and not self._scheduler_task.done():
             self._scheduler_task.cancel()
@@ -148,9 +169,9 @@ class Supervisor:
             try:
                 await asyncio.wait_for(self._current_run.done.wait(), timeout=5.0)
             except asyncio.TimeoutError:
-                logger.warning({"msg": "等待任务退出超时", "trace_id": self._current_run.trace_id})
+                logger.warning({"msg": "等待任务退出超时", "account": self._account_id, "trace_id": self._current_run.trace_id})
 
-        logger.info({"msg": "Supervisor 已关闭"})
+        logger.info({"msg": "Supervisor 已关闭", "account": self._account_id})
 
     # ── 任务执行 ──────────────────────────────────────────────
 
@@ -181,12 +202,41 @@ class Supervisor:
         with self._claim_run(task, trace_id) as run:
             return await self._operator.run(task, run.ctx)
 
+    async def execute_patrol_once(self, trace_id: str) -> TaskResult:
+        """手动触发一次人设驱动的 patrol：让 Strategist 按 persona 合成目标再跑。
+
+        调用约束：
+        - 当前 mode=PATROLLING 时拒绝（避免和调度循环打架），改到 WAITING 再调
+        - DEBUG 模式由 execute_task 内部拒绝
+        - 目标生成失败返回 TaskResult.failure（不等 60s backoff）
+        """
+        from agents.base import StrategistError
+        from services.knowledge import get_evolution_context
+
+        if self._mode == AgentMode.PATROLLING:
+            raise RuntimeError("patrol 自动调度正在运行，请先关闭 patrol 再手动触发")
+
+        snapshot = self._state.get()
+        evo = get_evolution_context(self._state, snapshot["title_few_shots"])
+        try:
+            goal = await self._strategist.generate_patrol_goal(
+                inspiration_pool=snapshot["inspiration_pool"],
+                evolution=evo,
+                trace_id=trace_id,
+            )
+        except StrategistError as e:
+            return TaskResult.failure(AgentError(f"巡逻目标生成失败: {e}", code="strategist_error"))
+
+        logger.info({"msg": "按人设手动触发 patrol", "account": self._account_id, "goal": goal}, trace_id)
+        task = Task(kind="patrol", goal=goal)
+        return await self.execute_task(task, trace_id=trace_id)
+
     async def _preempt_current(self) -> None:
         """通知旧任务取消并等待其真正退出"""
         if self._current_run is None:
             return
         old_run = self._current_run
-        logger.info({"msg": "抢占当前任务", "trace_id": old_run.trace_id})
+        logger.info({"msg": "抢占当前任务", "account": self._account_id, "trace_id": old_run.trace_id})
         old_run.ctx.cancel.cancel("preempted")
         cleanup_chrome_environment(old_run.trace_id)
         try:
@@ -195,6 +245,7 @@ class Supervisor:
             logger.warning(
                 {
                     "msg": "等待旧任务退出超时",
+                    "account": self._account_id,
                     "trace_id": old_run.trace_id,
                 }
             )
@@ -206,12 +257,30 @@ class Supervisor:
         ctx = self.make_ctx(actual_trace)
         run = ActiveRun(task=task, ctx=ctx)
         self._current_run = run
+        if self._events is not None:
+            from runtime.event_bus import EVT_TASK_STARTED, make_event_payload
+
+            self._events.publish(
+                EVT_TASK_STARTED,
+                make_event_payload(trace_id=actual_trace, kind=task.kind, goal=task.goal),
+            )
         try:
             yield run
         finally:
             run.done.set()
             if self._current_run is run:
                 self._current_run = None
+            if self._events is not None:
+                from runtime.event_bus import EVT_TASK_COMPLETED, make_event_payload
+
+                self._events.publish(
+                    EVT_TASK_COMPLETED,
+                    make_event_payload(
+                        trace_id=actual_trace,
+                        kind=task.kind,
+                        elapsed_seconds=int(time.time() - run.start_time),
+                    ),
+                )
 
     # ── 状态查询 ──────────────────────────────────────────────
 

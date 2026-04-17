@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -44,6 +45,10 @@ class RecipeOperator:
         self._backend = backend
         self._recorder = recorder
 
+    def set_backend(self, backend: ActionBackend) -> None:
+        """替换底层 ActionBackend（用于 runtime mode 热切换）。"""
+        self._backend = backend
+
     @property
     def has_recipes(self) -> bool:
         return self._recipes.has_recipes
@@ -52,7 +57,10 @@ class RecipeOperator:
         if not self._recipes.has_recipes:
             return RecipeAttempt.miss("no recipes loaded")
 
-        image_b64, _, _ = self._backend.screenshot(ctx.trace_id, include_cursor=True)
+        # backend.screenshot 对 cloud 是 HTTP 阻塞，丢线程池避免挂 asyncio loop
+        image_b64, _, _ = await asyncio.to_thread(
+            self._backend.screenshot, ctx.trace_id, True
+        )
         from datetime import datetime
 
         observation = Observation(image_base64=image_b64, captured_at=datetime.now().isoformat())

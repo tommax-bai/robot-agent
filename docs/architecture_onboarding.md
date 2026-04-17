@@ -24,8 +24,8 @@
 | mode | Backend（执行环境） | Strategy（决策方式） |
 |------|--------------------|---------------------|
 | `local_chrome`（默认） | `MacOSChromeBackend`：PyAutoGUI + ImageGrab | `VisionActionStep`：自家 VLM |
-| `cloud_vision` | `AgentBayBackend`：阿里无影云手机 | `VisionActionStep`：同上 |
-| `cloud_aliyun` | `AgentBayBackend`（共享 session） | `AliyunMobileAgentStrategy`：委托给阿里 mobile_use Agent |
+| `cloudmobile` | `AgentBayBackend`：阿里无影云手机 | `VisionActionStep`：同上 |
+| `agentbay` | `AgentBayBackend`（共享 session） | `AgentBayDelegateStrategy`：委托给 AgentBay 内置 mobile_use Agent |
 
 现在项目还加入了“可重复动作快路径”：
 
@@ -104,7 +104,7 @@ gunicorn -w 1 -k uvicorn.workers.UvicornWorker app:app -b 0.0.0.0:6702 --timeout
 6. `VisualLocator`：OpenCV / 坐标定位。
 7. `RecipeStore`、`TraceRecorder`、`BehaviorSummarizer`：动作记忆链路。
 8. `Backend`：按 `agent.runtime.mode` 由 `_build_backend()` 构造（`MacOSChromeBackend` 或 `AgentBayBackend`）。
-9. `Strategy`：按同样的 mode 由 `_build_strategy()` 构造（`VisionActionStep` 或 `AliyunMobileAgentStrategy`）。
+9. `Strategy`：按同样的 mode 由 `_build_strategy()` 构造（`VisionActionStep` 或 `AgentBayDelegateStrategy`）。
 10. `Strategist`、`Planner`、`ActionDispatcher`（注入 backend）、`VisionActionStep`（注入 backend）、`RecipeOperator`（注入 backend）、`SubtaskRunner`（注入 strategy）、`Operator`、`Supervisor`。
 
 新人修改依赖连线时，优先看 `AppContainer`，不要在业务函数里临时创建全局对象。新增执行模式时，往 `_build_backend()` 和 `_build_strategy()` 里加分支即可，agent 层不动。
@@ -151,7 +151,7 @@ POST /api/v1/agent/actions/sync
 - **`ActionBackend`**（`tools/backends/__init__.py`）回答"在哪执行原子动作"。Protocol 只有两个方法：`screenshot(trace_id, include_cursor) -> (b64, mx, my)` 和 `execute_action(trace_id, {method, params, finish}) -> dict`。三个消费方（`ActionDispatcher`、`VisionActionStep`、`RecipeOperator`）通过构造函数注入 backend，永远不直接 import `tools.actions` / `tools.screenshot`。
 - **`SubtaskStrategy`**（`agents/operator/strategy.py`）回答"如何把 SubTask 变成 TaskResult"。Protocol：`name + async run(subtask, ctx) -> TaskResult`。两种实现：
   - `VisionActionStep`：自家 VLM 视觉循环（mode 1/2）
-  - `AliyunMobileAgentStrategy`：把整个子任务交给阿里 mobile_use Agent 黑盒（mode 3）
+  - `AgentBayDelegateStrategy`：把整个子任务交给 AgentBay 内置 mobile_use Agent 黑盒（agentbay）
 
 云端 session 是懒加载的：构造 `AgentBayBackend` 不会建实例，第一次 `screenshot()` 或 `ensure_session()` 才真正产生云端计费。`GET /api/v1/agent/runtime` 返回 `session_active` 字段供查看。
 
@@ -549,7 +549,7 @@ result = await runner.run(subtask, ctx)
 切换执行模式：
 
 ```text
-设置环境变量 AGENT_RUNTIME_MODE=local_chrome | cloud_vision | cloud_aliyun
+设置环境变量 AGENT_RUNTIME_MODE=local_chrome | cloudmobile | agentbay
 云端模式必填 AGENTBAY_API_KEY，可选 AGENTBAY_IMAGE_ID / AGENTBAY_SCREENSHOT_FORMAT
 启动后 curl /api/v1/agent/runtime 验证当前模式与 backend / strategy
 ```

@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import uuid
+from io import BytesIO
+from pathlib import Path
 
 import httpx
 import websockets
-from fastapi import APIRouter, Body, Request, Response, WebSocket
-from fastapi.responses import RedirectResponse
+from fastapi import APIRouter, Body, HTTPException, Request, Response, WebSocket
+from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
 
 import config
 import utils.logger as logger
@@ -18,25 +21,57 @@ from runtime.container import get_container
 router = APIRouter()
 
 
+def _resolve_worker(account_id: str | None = None):
+    """根据可选 account_id 取 Worker。省略 → default worker。
+    未注册的 id 返回 404。"""
+    pool = get_container().workers
+    if not account_id:
+        return pool.default()
+    if not pool.has(account_id):
+        raise HTTPException(status_code=404, detail=f"未注册的 account_id={account_id}")
+    return pool.get(account_id)
+
+
+def _backend_runtime_payload(worker) -> dict:
+    """聚合一个 worker 的 runtime 视图（mode / backend / strategy / session）。"""
+    from tools.backends.session_manager import SessionState
+
+    payload: dict = {
+        "account_id": worker.account_id,
+        "mode": worker.mode,
+        "backend": type(worker.backend).__name__,
+        "strategy": {"type": type(worker.strategy).__name__, "name": worker.strategy.name},
+    }
+    sm = worker.session_mgr
+    if sm is not None:
+        sw, sh = sm.screen_size
+        payload["agentbay"] = {
+            "image_id": sm.image_id,
+            "session_state": sm.state.value,
+            "session_active": sm.state == SessionState.ACTIVE,
+            "session_id": sm.session_id,
+            "screen_size": {"width": sw, "height": sh},
+            "live_view_url": sm.get_url(),
+        }
+    return payload
+
+
 def _supervisor():
-    return get_container().supervisor
+    """向后兼容：原来的 _supervisor() 入口，等价于 default worker 的 supervisor。"""
+    return _resolve_worker(None).supervisor
 
 
 async def handle_agent_actions(trace_id: str, request: AgentRequest):
-    """异步执行 Agent 任务"""
+    """异步执行 Agent 任务（路由到指定 worker，或 default）"""
     try:
+        worker = _resolve_worker(request.account_id)
         logger.info(
-            {
-                "msg": "开始执行 Agent 任务",
-                "user_goal": request.user_goal,
-            },
+            {"msg": "开始执行 Agent 任务", "user_goal": request.user_goal, "account": worker.account_id},
             trace_id,
         )
-
         task = Task(kind="user_goal", goal=request.user_goal)
-        result = await _supervisor().execute_task(task, trace_id=trace_id)
-
-        logger.info({"msg": "Agent 任务完成", "ok": result.ok}, trace_id)
+        result = await worker.supervisor.execute_task(task, trace_id=trace_id)
+        logger.info({"msg": "Agent 任务完成", "ok": result.ok, "account": worker.account_id}, trace_id)
     except Exception as e:
         logger.error({"msg": "Agent 任务执行失败", "error": str(e)}, trace_id)
 
@@ -48,6 +83,7 @@ async def router_agent_actions(request: AgentRequest = Body(...)):
     asyncio.create_task(handle_agent_actions(trace_id, request))
     return {
         "trace_id": trace_id,
+        "account_id": request.account_id or get_container().workers.default_id,
         "message": "任务已启动，正在后台执行",
         "result": None,
         "error": None,
@@ -59,10 +95,12 @@ async def router_agent_actions_sync(request: AgentRequest = Body(...)):
     """同步执行 Agent 任务"""
     trace_id = str(uuid.uuid4())
     try:
+        worker = _resolve_worker(request.account_id)
         task = Task(kind="user_goal", goal=request.user_goal)
-        result = await _supervisor().execute_task(task, trace_id=trace_id)
+        result = await worker.supervisor.execute_task(task, trace_id=trace_id)
         return {
             "trace_id": trace_id,
+            "account_id": worker.account_id,
             "message": "任务完成" if result.ok else "任务失败",
             "result": {
                 "ok": result.ok,
@@ -81,61 +119,286 @@ async def router_agent_actions_sync(request: AgentRequest = Body(...)):
         }
 
 
+@router.post("/agent/workers")
+async def create_workers(
+    id: str | None = Body(None, embed=True),
+    count: int = Body(1, embed=True),
+    display_name: str | None = Body(None, embed=True),
+    image_id: str | None = Body(None, embed=True),
+):
+    """运行时新增 N 个 worker（不写回 config，重启即消失）。
+
+    - id 留空 → 自动生成 worker-{8 位 hex}（count > 1 时强制自动生成，避免冲突）
+    - count = 1..10
+    - 同名冲突 → 409
+    - image_id 缺省走全局 runtime.agentbay.image_id
+    """
+    if count < 1 or count > 10:
+        raise HTTPException(status_code=400, detail="count 必须在 1..10 范围内")
+    if count > 1 and id:
+        raise HTTPException(status_code=400, detail="count > 1 时 id 必须留空（自动生成）")
+
+    container = get_container()
+    created: list[dict] = []
+    for _ in range(count):
+        acct_id = id or f"worker-{uuid.uuid4().hex[:8]}"
+        cfg: dict = {"id": acct_id}
+        if display_name:
+            cfg["display_name"] = display_name
+        if image_id:
+            cfg["image_id"] = image_id
+        try:
+            worker = container.add_worker(cfg)
+        except ValueError as e:
+            raise HTTPException(status_code=409, detail=str(e)) from e
+        except Exception as e:
+            logger.error({"msg": "新增 worker 失败", "id": acct_id, "error": str(e)})
+            raise HTTPException(status_code=500, detail=f"新增失败: {e}") from e
+        created.append(
+            {
+                "account_id": worker.account_id,
+                "display_name": worker.account_cfg.get("display_name") or worker.account_id,
+                "backend": type(worker.backend).__name__,
+            }
+        )
+    return {"created": created, "count": len(created)}
+
+
+@router.delete("/agent/workers/{account_id}")
+async def remove_worker(account_id: str):
+    """移除 worker：停 scheduler、释放 session、从池里删。
+
+    - 不存在 → 404
+    - 是最后一个 / 任务活跃 → 409
+    """
+    try:
+        worker = get_container().remove_worker(account_id)
+        return {
+            "ok": True,
+            "removed": worker.account_id,
+            "message": f"worker={account_id} 已移除，session 已释放",
+        }
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+    except Exception as e:
+        logger.error({"msg": "移除 worker 失败", "id": account_id, "error": str(e)})
+        raise HTTPException(status_code=500, detail=f"移除失败: {e}") from e
+
+
+@router.get("/agent/workers")
+async def list_workers():
+    """列出所有 worker：账号 ID、display_name、runtime 信息、当前任务状态。
+
+    Dashboard 用此端点渲染左侧 worker 卡片列表。
+    """
+    pool = get_container().workers
+    out = []
+    for w in pool.list():
+        runtime = _backend_runtime_payload(w)
+        status = w.supervisor.get_status()
+        out.append(
+            {
+                **runtime,
+                "display_name": w.account_cfg.get("display_name") or w.account_id,
+                "description": w.account_cfg.get("description", ""),
+                "is_default": w.account_id == pool.default_id,
+                "supervisor": status,
+            }
+        )
+    return {"workers": out, "default_id": pool.default_id}
+
+
 @router.get("/agent/status")
-async def get_agent_status():
-    return _supervisor().get_status()
+async def get_agent_status(account_id: str | None = None):
+    """单 worker 状态。account_id 省略 → default。"""
+    return _resolve_worker(account_id).supervisor.get_status()
 
 
 @router.get("/agent/runtime")
-async def get_agent_runtime():
-    """返回当前执行运行时配置：mode / backend / strategy / 云端连接状态。
+async def get_agent_runtime(account_id: str | None = None):
+    """单 worker 的 runtime 视图。多 worker 聚合视图请用 /agent/workers。"""
+    return _backend_runtime_payload(_resolve_worker(account_id))
 
-    用于排查"为什么我的指令落到了本地 Chrome 而不是云手机"这类问题。
-    不会触发任何云端 session 创建。
+
+@router.get("/agent/live-url")
+async def get_live_url(account_id: str | None = None):
+    """获取云手机串流地址（authCode 快过期时自动刷新）。"""
+    worker = _resolve_worker(account_id)
+    sm = worker.session_mgr
+    if sm is None:
+        return {"live_view_url": "", "refreshed": False}
+    url = await asyncio.to_thread(sm.refresh_url)
+    return {"live_view_url": url, "refreshed": bool(url)}
+
+
+@router.post("/agent/runtime/mode")
+async def set_runtime_mode(
+    mode: str = Body(..., embed=True),
+    account_id: str | None = Body(None, embed=True),
+):
+    """热切换某 worker 的 runtime.mode。"""
+    try:
+        worker = _resolve_worker(account_id)
+        return await worker.swap_runtime_mode(mode)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error({"msg": "runtime.mode 切换失败", "error": str(e)})
+        raise HTTPException(status_code=500, detail=f"切换失败: {e}") from e
+
+
+@router.get("/agent/events")
+async def agent_events(request: Request):
+    """SSE 事件流：dashboard 订阅 supervisor 状态变化（mode 切换、任务起止）。
+
+    客户端 EventSource('/api/v1/agent/events') 即可连接。
+    每 25s 发一次 keepalive 注释，防止反向代理把 idle 连接断掉。
     """
-    c = get_container()
-    runtime_cfg = config.agent["runtime"]
-    backend = c.backend
-    payload: dict = {
-        "mode": runtime_cfg["mode"],
-        "backend": type(backend).__name__,
-        "strategy": {"type": type(c.strategy).__name__, "name": c.strategy.name},
+    bus = get_container().event_bus
+    queue = bus.subscribe()
+
+    async def event_stream():
+        try:
+            # 连接建立时先推一条 ready 事件，前端可以立即触发一次状态拉取
+            yield f"event: ready\ndata: {{}}\n\n"
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=25.0)
+                    yield f"event: {event['type']}\ndata: {json.dumps(event, ensure_ascii=False)}\n\n"
+                except asyncio.TimeoutError:
+                    # SSE keepalive 注释行
+                    yield ": ka\n\n"
+        finally:
+            bus.unsubscribe(queue)
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",  # 关掉 nginx 缓冲
+            "Connection": "keep-alive",
+        },
+    )
+
+
+@router.get("/agent/screen.jpg")
+async def agent_screen(account_id: str | None = None):
+    """指定 worker 的本地 Chrome 截图（仅 local_chrome 模式）。"""
+    worker = _resolve_worker(account_id)
+    runtime_mode = worker.mode  # per-worker
+    if runtime_mode != "local_chrome":
+        raise HTTPException(
+            status_code=404,
+            detail=f"screen.jpg 仅在 local_chrome 模式可用（当前 {runtime_mode}），云端请用 live_view_url",
+        )
+    try:
+        b64, _, _ = worker.backend.screenshot("dashboard", include_cursor=True)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"截图失败: {e}") from e
+    if not b64:
+        raise HTTPException(status_code=503, detail="截图为空（窗口未找到？）")
+    import base64
+
+    return Response(content=base64.b64decode(b64), media_type="image/jpeg")
+
+
+@router.post("/agent/cancel")
+async def agent_cancel(account_id: str | None = Body(None, embed=True)):
+    """请求取消指定 worker 的当前任务（非阻塞）。"""
+    worker = _resolve_worker(account_id)
+    worker.supervisor.request_cancel("dashboard_cancel")
+    return {"message": f"已请求取消 worker={worker.account_id} 的当前任务"}
+
+
+@router.post("/agent/session/release")
+async def release_session(
+    account_id: str | None = Body(None, embed=True),
+    force: bool = Body(False, embed=True),
+):
+    """主动释放指定 worker 的云端 session（停计费、关闭浏览器等所有应用）。
+
+    - force=False（默认）：任务活跃时 409 拒绝，需先 /agent/cancel
+    - force=True：任务活跃时先 cancel 当前任务再 teardown（可能让正在执行的 SDK 调用报错，但能确保关闭）
+    - 本地模式无 session 概念，返回 noop
+    - 释放后下次发任务自动新建 session，需重新扫码登录
+    """
+    worker = _resolve_worker(account_id)
+    try:
+        return worker.release_session(force=force)
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+    except Exception as e:
+        logger.error({"msg": "release_session 失败", "account": worker.account_id, "error": str(e)})
+        raise HTTPException(status_code=500, detail=f"释放失败: {e}") from e
+
+
+@router.post("/agent/scheduled/patrol-once")
+async def run_patrol_once_endpoint(account_id: str | None = Body(None, embed=True)):
+    """按 persona 手动触发一次 patrol（指定 worker，或 default）。"""
+    worker = _resolve_worker(account_id)
+    sv = worker.supervisor
+    if sv.mode == AgentMode.PATROLLING:
+        raise HTTPException(
+            status_code=409,
+            detail=f"worker={worker.account_id} 的 patrol 自动调度正在运行，请先关闭再手动触发",
+        )
+    trace_id = f"patrol-manual-{uuid.uuid4().hex[:8]}"
+    asyncio.create_task(_run_patrol_once_bg(sv, trace_id))
+    return {
+        "trace_id": trace_id,
+        "account_id": worker.account_id,
+        "message": "已触发人设驱动的一次 patrol，详情看 logs 与 live view",
     }
-    # AgentBay 后端额外暴露 session 是否已建立、镜像、截图格式等
-    if type(backend).__name__ == "AgentBayBackend":
-        payload["agentbay"] = {
-            "image_id": getattr(backend, "_image_id", None),
-            "screenshot_format": getattr(backend, "_screenshot_format", None),
-            "session_active": getattr(backend, "_session", None) is not None,
-            "screen_size": {
-                "width": getattr(backend, "_screen_w", 0),
-                "height": getattr(backend, "_screen_h", 0),
-            },
-        }
-    return payload
+
+
+async def _run_patrol_once_bg(sv, trace_id: str) -> None:
+    """后台 runner：吞掉异常避免 'Task exception was never retrieved' warning。"""
+    try:
+        result = await sv.execute_patrol_once(trace_id=trace_id)
+        logger.info({"msg": "人设驱动 patrol 完成", "ok": result.ok}, trace_id)
+    except RuntimeError as e:
+        logger.warning({"msg": "人设驱动 patrol 被拒绝（运行期 race）", "reason": str(e)}, trace_id)
+    except Exception as e:
+        logger.error({"msg": "人设驱动 patrol 异常", "error": str(e)}, trace_id)
 
 
 @router.post("/agent/patrol")
-async def toggle_patrol(enable: bool = Body(..., embed=True)):
-    sv = _supervisor()
+async def toggle_patrol(
+    enable: bool = Body(..., embed=True),
+    account_id: str | None = Body(None, embed=True),
+):
+    """开/关指定 worker 的自动巡逻调度。"""
+    worker = _resolve_worker(account_id)
+    sv = worker.supervisor
     if enable:
         sv.set_mode(AgentMode.PATROLLING)
         sv.start_scheduler()
-        return {"message": "自动调度已开启"}
+        return {"message": f"worker={worker.account_id} 自动调度已开启"}
     sv.set_mode(AgentMode.WAITING)
-    return {"message": "自动调度已关闭"}
+    return {"message": f"worker={worker.account_id} 自动调度已关闭"}
 
 
 @router.post("/agent/mode/debug")
-async def set_debug_mode():
-    _supervisor().set_mode(AgentMode.DEBUG)
-    return {"message": "已进入调试模式，所有任务已停止"}
+async def set_debug_mode(account_id: str | None = Body(None, embed=True)):
+    worker = _resolve_worker(account_id)
+    worker.supervisor.set_mode(AgentMode.DEBUG)
+    return {"message": f"worker={worker.account_id} 已进入调试模式"}
 
 
 @router.post("/agent/mode/waiting")
-async def set_waiting_mode():
-    _supervisor().set_mode(AgentMode.WAITING)
-    return {"message": "已进入WAITING模式"}
+async def set_waiting_mode(account_id: str | None = Body(None, embed=True)):
+    worker = _resolve_worker(account_id)
+    worker.supervisor.set_mode(AgentMode.WAITING)
+    return {"message": f"worker={worker.account_id} 已进入 WAITING 模式"}
 
 
 

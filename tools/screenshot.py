@@ -134,9 +134,9 @@ def get_screenshot_base64(
         h=window.bottom - window.top,
     )
 
-    logger.info(
+    logger.debug(
         {
-            "msg": f"截图成功, 鼠标位置: {mouse_x_scaled}, {mouse_y_scaled}, 窗口信息 {screen_tool.get_window()}",
+            "msg": f"截图成功, 鼠标位置: {mouse_x_scaled}, {mouse_y_scaled}",
             "trace_id": trace_id,
         }
     )

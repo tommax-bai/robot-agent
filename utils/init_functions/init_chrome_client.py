@@ -56,7 +56,7 @@ class ChromeClient:
                 ]
             return []
         except Exception as e:
-            logger.error(f"获取标签页列表失败: {e}")
+            logger.error({"msg": "获取标签页列表失败", "error": str(e)})
             return []
 
     def list_all_targets(self) -> List[Dict[str, Any]]:
@@ -71,7 +71,7 @@ class ChromeClient:
                 return resp.json()
             return []
         except Exception as e:
-            logger.error(f"获取目标列表失败: {e}")
+            logger.error({"msg": "获取目标列表失败", "error": str(e)})
             return []
 
     def get_tab_count(self) -> int:
@@ -98,7 +98,7 @@ class ChromeClient:
                 return True
             return False
         except Exception as e:
-            logger.error(f"切换标签页失败: {e}")
+            logger.error({"msg": "切换标签页失败", "error": str(e)})
             return False
 
     def switch_to_tab_by_url(self, url_pattern: str) -> bool:
@@ -146,7 +146,7 @@ class ChromeClient:
                 return resp.json().get("id")
             return None
         except Exception as e:
-            logger.error(f"打开新标签页失败: {e}")
+            logger.error({"msg": "打开新标签页失败", "error": str(e)})
             return None
 
     def close_tab(self, tab_id: str) -> bool:
@@ -163,7 +163,7 @@ class ChromeClient:
             )
             return resp.status_code == 200
         except Exception as e:
-            logger.error(f"关闭标签页失败: {e}")
+            logger.error({"msg": "关闭标签页失败", "error": str(e)})
             return False
 
     def get_current_tab(self) -> Dict[str, Any] | None:
@@ -207,7 +207,7 @@ class ChromeClient:
                     "height": int(bounds.get("height", 0)),
                 }
             except Exception as e:
-                logger.warning(f"获取 Chrome 窗口 bounds 失败: {e}")
+                logger.warning({"msg": "获取 Chrome 窗口 bounds 失败", "error": str(e)})
                 return None
 
     # ==================== 原有方法 ====================
@@ -255,13 +255,13 @@ class ChromeClient:
                 break
 
             if not self._is_debug_port_active():
-                logger.info("[Chrome 监控] 检测到 Chrome 已关闭，正在重启...")
+                logger.info({"msg": "[Chrome 监控] 检测到 Chrome 已关闭，正在重启..."})
                 with self._lock:
                     self._driver = None
                     if self._ensure_connected():
-                        logger.info(f"[Chrome 监控] 重连成功: {self._driver.current_url}")
+                        logger.info({"msg": "[Chrome 监控] 重连成功", "url": self._driver.current_url})
                     else:
-                        logger.error("[Chrome 监控] 重连失败")
+                        logger.error({"msg": "[Chrome 监控] 重连失败"})
 
     def execute_js(self, script: str, auto_return: bool = True) -> Any:
         """执行 JavaScript"""
@@ -355,7 +355,7 @@ class ChromeClient:
                 )
                 return False
 
-            logger.info(f"正在启动 Chrome: {' '.join(cmd)}")
+            logger.info({"msg": "正在启动 Chrome", "cmd": " ".join(cmd)})
 
             kwargs = {
                 "stdout": subprocess.DEVNULL,
@@ -383,7 +383,7 @@ class ChromeClient:
                     )
                     return False
                 if self._is_debug_port_active():
-                    logger.info("Chrome 调试端口已激活，等待 2 秒确保服务就绪...")
+                    logger.info({"msg": "Chrome 调试端口已激活，等待 2 秒确保服务就绪..."})
                     time.sleep(2)
                     return True
 
@@ -422,11 +422,11 @@ class ChromeClient:
                 driver.current_url
                 return driver
             except Exception as e:
-                logger.warning(f"第 {i + 1} 次连接 Chrome 失败: {e}")
+                logger.warning({"msg": f"第 {i + 1} 次连接 Chrome 失败", "error": str(e)})
                 if i < max_retries - 1:
                     time.sleep(1)
                 else:
-                    logger.error(f"连接 Chrome 最终失败: {e}")
+                    logger.error({"msg": "连接 Chrome 最终失败", "error": str(e)})
                     return None
 
     def _ensure_connected(self) -> bool:
@@ -467,7 +467,7 @@ def init_chrome_client() -> ChromeClient:
             "可通过环境变量 CHROME_BINARY / CHROMEDRIVER_PATH 覆盖默认路径。"
         )
 
-    logger.info("Chrome 客户端初始化成功")
+    logger.info({"msg": "Chrome 客户端初始化成功"})
     return _instance
 
 
@@ -484,7 +484,7 @@ def close_chrome_client():
     if _instance:
         _instance.stop()
         _instance = None
-        logger.info("Chrome 客户端已关闭")
+        logger.info({"msg": "Chrome 客户端已关闭"})
 
 
 def disable_chrome_auto_restart() -> None:

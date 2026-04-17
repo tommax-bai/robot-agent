@@ -41,16 +41,43 @@ class IntentRegistry:
             logger.warning({"msg": "intent 注册表不存在", "path": str(self._path)})
             return
         try:
-            data = json.loads(self._path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as e:
-            logger.warning({"msg": "intent 注册表加载失败", "error": str(e)})
+            raw_text = self._path.read_text(encoding="utf-8")
+        except OSError as e:
+            logger.warning({"msg": "intent 注册表读取失败", "error": str(e)})
             return
 
-        for name, raw in data.get("intents", {}).items():
-            aliases = tuple(str(a) for a in raw.get("aliases", []))
+        try:
+            data = json.loads(raw_text)
+        except json.JSONDecodeError as e:
+            logger.warning({"msg": "intent 注册表 JSON 解析失败，使用空注册表", "error": str(e), "path": str(self._path)})
+            return
+
+        if not isinstance(data, dict):
+            logger.warning({"msg": "intent 注册表顶层不是 dict，使用空注册表", "path": str(self._path)})
+            return
+
+        intents = data.get("intents")
+        if not isinstance(intents, dict):
+            logger.warning({"msg": "intent 注册表缺少 intents 字段或格式错误，使用空注册表", "path": str(self._path)})
+            return
+
+        skipped = 0
+        for name, raw in intents.items():
+            if not isinstance(raw, dict):
+                skipped += 1
+                continue
+            # 必须有 description 字段
+            if "description" not in raw:
+                logger.warning({"msg": "intent 条目缺少 description，已跳过", "intent": name})
+                skipped += 1
+                continue
+            aliases_raw = raw.get("aliases", [])
+            if not isinstance(aliases_raw, list):
+                aliases_raw = []
+            aliases = tuple(str(a) for a in aliases_raw)
             entry = IntentEntry(
                 name=name,
-                description=str(raw.get("description", "")),
+                description=str(raw["description"]),
                 aliases=aliases,
                 skill=raw.get("skill"),
             )
@@ -60,6 +87,9 @@ class IntentRegistry:
                 self._alias_index[alias] = name
             # intent name 本身也作为别名
             self._alias_index[name] = name
+
+        if skipped:
+            logger.warning({"msg": f"intent 注册表加载完成，跳过 {skipped} 个无效条目", "loaded": len(self._entries)})
 
     def resolve(self, raw_intent: str) -> str:
         """将 LLM 输出的 intent 归一化到注册表中的标准名称。

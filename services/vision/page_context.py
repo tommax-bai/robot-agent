@@ -34,12 +34,14 @@ class PageContextCache:
         *,
         background: bool = False,
         max_workers: int = 1,
+        max_cached: int = 20,
     ):
         self._latest: dict[str, PageContext] = {}
         self._inflight: dict[str, Future[PageContext]] = {}
         self._lock = threading.Lock()
         self._classifier = classifier or UnknownPageClassifier()
         self._background = background
+        self._max_cached = max_cached
         self._executor = (
             ThreadPoolExecutor(max_workers=max(1, max_workers), thread_name_prefix="page-classifier")
             if background
@@ -59,6 +61,7 @@ class PageContextCache:
         context = self._classify_context(trace_id, observation, screenshot_hash)
         with self._lock:
             self._latest[trace_id] = context
+            self._evict_if_needed_locked()
         return context
 
     def invalidate(self, trace_id: str) -> None:
@@ -85,6 +88,7 @@ class PageContextCache:
                     logger.warning({"msg": "后台页面分类失败，返回 unknown", "error": str(e)}, trace_id)
                     return self._unknown_context(observation, screenshot_hash, "page_classification_failed")
                 self._latest[trace_id] = context
+                self._evict_if_needed_locked()
                 logger.info(
                     {
                         "msg": "后台页面分类结果已应用",
@@ -105,6 +109,22 @@ class PageContextCache:
                 logger.info({"msg": "后台页面分类已调度"}, trace_id)
 
         return self._unknown_context(observation, screenshot_hash, "page_classification_pending")
+
+    def _evict_if_needed_locked(self) -> None:
+        """Remove the oldest cache entries (by insertion order) when size exceeds max_cached.
+
+        Must be called while self._lock is held.  Also cleans up any _inflight
+        futures that belong to evicted trace_ids.
+        """
+        while len(self._latest) > self._max_cached:
+            evicted_trace_id = next(iter(self._latest))
+            del self._latest[evicted_trace_id]
+            # Clean up stale inflight futures for the evicted trace_id
+            prefix = f"{evicted_trace_id}:"
+            for key, future in list(self._inflight.items()):
+                if key.startswith(prefix):
+                    future.cancel()
+                    self._inflight.pop(key, None)
 
     def _cancel_stale_inflight_locked(self, trace_id: str, keep_key: str) -> None:
         for key, future in list(self._inflight.items()):
