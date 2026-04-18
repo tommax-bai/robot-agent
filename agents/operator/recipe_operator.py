@@ -6,17 +6,18 @@ import asyncio
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-import utils.logger as logger
-from agents.base import AgentError, Observation, TaskResult
-from services.action_memory import RecipeAttempt
+from agents.base import AgentError, TaskResult
+from agents.operator.vision.types import Observation
+from services.recipes import RecipeAttempt
+from utils.events import Ev, ev
 
 if TYPE_CHECKING:
     from agents.base import SubTask
     from agents.operator.action_dispatcher import ActionDispatcher
-    from runtime.context import RunContext
-    from services.action_memory import RecipeStep, RecipeStore, TraceRecorder
+    from runtime.ctx import RunContext
+    from services.recipes import RecipeStep, RecipeStore, TraceRecorder
     from services.vision import PageContext, PageContextCache, VisualLocator
-    from tools.backends import ActionBackend
+    from tools.environment import Environment
 
 
 @dataclass(frozen=True)
@@ -35,19 +36,19 @@ class RecipeOperator:
         recipes: RecipeStore,
         page_cache: PageContextCache,
         locator: VisualLocator,
-        backend: ActionBackend,
+        env: Environment,
         recorder: TraceRecorder | None = None,
     ):
         self._dispatcher = dispatcher
         self._recipes = recipes
         self._page_cache = page_cache
         self._locator = locator
-        self._backend = backend
+        self._env = env
         self._recorder = recorder
 
-    def set_backend(self, backend: ActionBackend) -> None:
-        """替换底层 ActionBackend（用于 runtime mode 热切换）。"""
-        self._backend = backend
+    def set_env(self, env: Environment) -> None:
+        """替换底层 Environment（用于 runtime mode 热切换）。"""
+        self._env = env
 
     @property
     def has_recipes(self) -> bool:
@@ -57,9 +58,9 @@ class RecipeOperator:
         if not self._recipes.has_recipes:
             return RecipeAttempt.miss("no recipes loaded")
 
-        # backend.screenshot 对 cloud 是 HTTP 阻塞，丢线程池避免挂 asyncio loop
+        # env.capture 对 cloud 是 HTTP 阻塞，丢线程池避免挂 asyncio loop
         image_b64, _, _ = await asyncio.to_thread(
-            self._backend.screenshot, ctx.trace_id, True
+            self._env.capture, ctx.trace_id, True
         )
         from datetime import datetime
 
@@ -67,21 +68,14 @@ class RecipeOperator:
         page_context = self._page_cache.get_or_classify(ctx.trace_id, observation)
         recipe = self._recipes.match(subtask, page_context)
         if recipe is None:
+            ev(Ev.RECIPE_MISS, intent=subtask.intent, page_state=page_context.page_state,
+               sub_goal=subtask.goal)
             attempt = RecipeAttempt.miss("no matching recipe")
             self._record(ctx.trace_id, subtask, page_context, attempt)
             return attempt
 
-        mode = "试运行" if recipe.trial else "快路径"
-        logger.info(
-            {
-                "msg": f"命中动作 recipe，尝试{mode}执行",
-                "recipe_id": recipe.id,
-                "intent": recipe.intent,
-                "trial": recipe.trial,
-                "page_state": page_context.page_state,
-            },
-            ctx.trace_id,
-        )
+        ev(Ev.RECIPE_HIT, recipe_id=recipe.id, intent=recipe.intent, trial=recipe.trial,
+           page_state=page_context.page_state)
 
         actions = []
         for step in recipe.steps:
@@ -107,10 +101,7 @@ class RecipeOperator:
         if recipe.trial:
             updated = self._recipes.record_trial_result(recipe, success)
             if updated.enabled and not updated.trial:
-                logger.info(
-                    {"msg": "试运行 recipe 已自动提升为正式", "recipe_id": updated.id},
-                    ctx.trace_id,
-                )
+                ev(Ev.RECIPE_PROMOTED, recipe_id=updated.id, intent=updated.intent)
 
         self._record(ctx.trace_id, subtask, page_context, attempt)
         return attempt

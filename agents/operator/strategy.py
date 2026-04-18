@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
     from agents.base import SubTask, TaskResult
-    from runtime.context import RunContext
+    from runtime.ctx import RunContext
 
 
 class SubtaskStrategy(Protocol):

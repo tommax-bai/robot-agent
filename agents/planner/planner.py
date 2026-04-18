@@ -1,103 +1,81 @@
-"""
-Planner Agent：任务分解。
+"""Planner：把用户目标拆成 SubTask 列表。
 
-设计原则：
-- 依赖（LlmTool, SkillRegistry, IntentRegistry）通过构造注入
-- 返回 Plan dataclass，不再 list[dict]
+Thin Facade 组合 4 个协作者：
+- PlanPromptBuilder：模板 + 变量注入
+- LLM 调用（通过 ctx.llm）
+- PlanParser：顶层 JSON 结构校验
+- SubTaskNormalizer：逐项 skill/intent 归一化
+
+与旧实现的关键差异：
+- async：LLM 调用用 asyncio.to_thread 包，不再阻塞 asyncio loop
+- 模板缓存：PlanPromptBuilder 只加载一次
+- 配置集中：PlannerConfig 值对象取代 cfg["..."] 散读
+- 职责分离：prompt / parse / normalize 各一个类，可单独测
 - 失败抛 PlannerError，不返回单任务兜底
-- skill 过滤在 planner 内部完成，不在 operator
-- intent 通过 IntentRegistry 归一化，保证与 Recipe 端标签一致
 """
 
 from __future__ import annotations
 
-from datetime import datetime
+import asyncio
 from typing import TYPE_CHECKING
 
-import config
-import utils.logger as logger
-from agents.base import Plan, PlannerError, SubTask
-from utils.prompt_template import load_prompt_template
+from agents.base import Plan, PlannerError
+from agents.planner.config import PlannerConfig
+from agents.planner.normalizer import SubTaskNormalizer
+from agents.planner.parser import PlanParser
+from agents.planner.prompt import PlanPromptBuilder
 
 if TYPE_CHECKING:
-    from runtime.context import RunContext
-    from services.intent_registry import IntentRegistry
+    from runtime.ctx import RunContext
+    from services.intents import IntentRegistry
     from services.skill_registry import SkillRegistry
 
 
 class Planner:
     name = "planner"
 
-    def __init__(self, skills: SkillRegistry, intents: IntentRegistry):
-        self._skills = skills
-        self._intents = intents
-        cfg = config.agent["planner"]
-        self._model = cfg["model"]
-        self._client = cfg["llm_client"]
-        self._temperature = cfg["temperature"]
-        self._max_tokens = cfg["max_tokens"]
+    def __init__(
+        self,
+        cfg: PlannerConfig,
+        prompt_builder: PlanPromptBuilder,
+        parser: PlanParser,
+        normalizer: SubTaskNormalizer,
+    ):
+        self._cfg = cfg
+        self._prompt_builder = prompt_builder
+        self._parser = parser
+        self._normalizer = normalizer
 
-    def generate_plan(self, ctx: RunContext, user_goal: str) -> Plan:
+    async def generate_plan(self, ctx: RunContext, user_goal: str) -> Plan:
         """调用 LLM 生成任务规划。失败抛 PlannerError。"""
-        skill_list = self._skills.get_all()
-        skills_manifest = "".join(f"- {m.name}: {m.description}\n" for m in skill_list)
-        intent_candidates = self._intents.format_for_prompt()
-        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-        _, body = load_prompt_template("prompts/operator/plan.md")
-        prompt = body.format(
-            SKILL_MANIFEST=skills_manifest,
-            INTENT_CANDIDATES=intent_candidates,
-            USER_GOAL=user_goal,
-            CURRENT_TIME=current_time,
-        )
+        prompt = self._prompt_builder.build(user_goal)
 
         try:
-            data, _raw = ctx.llm.call_json(
+            data, _raw = await asyncio.to_thread(
+                ctx.llm.call_json,
                 messages=[{"role": "user", "content": prompt}],
-                model=self._model,
-                client_name=self._client,
-                temperature=self._temperature,
-                max_tokens=self._max_tokens,
+                model=self._cfg.model,
+                client_name=self._cfg.client,
+                temperature=self._cfg.temperature,
+                max_tokens=self._cfg.max_tokens,
                 trace_id=ctx.trace_id,
             )
         except Exception as e:
-            logger.error({"msg": "planner LLM 调用失败", "error": str(e)}, ctx.trace_id)
+            # `plan.failed` 最终由 operator 在捕获到 PlannerError 时发布；
+            # 这里不再重复日志，交由 llm_failed 追踪底层原因。
             raise PlannerError(f"plan generation failed: {e}") from e
 
-        raw_tasks = data.get("tasks") if isinstance(data, dict) else None
-        if not isinstance(raw_tasks, list) or not raw_tasks:
-            raise PlannerError(f"planner 返回了无效的 tasks 字段: {data}")
+        raw_tasks = self._parser.parse(data, _raw)
+        return Plan(subtasks=tuple(self._normalizer.normalize(raw_tasks, trace_id=ctx.trace_id)))
 
-        subtasks: list[SubTask] = []
-        for i, t in enumerate(raw_tasks):
-            sub_goal = t.get("sub_goal") if isinstance(t, dict) else None
-            if not sub_goal:
-                raise PlannerError(f"子任务 {i} 缺少 sub_goal")
-            skill = t.get("required_skill") if isinstance(t, dict) else None
-            # planner 输出了不可用的 skill，直接降级为 None（不报错，让 operator 视觉走）
-            if skill and self._skills.get(skill) is None:
-                logger.warning(
-                    {
-                        "msg": "planner 返回了不可用的 skill，已降级",
-                        "skill": skill,
-                    },
-                    ctx.trace_id,
-                )
-                skill = None
 
-            raw_intent = t.get("intent", "") if isinstance(t, dict) else ""
-            intent = self._intents.resolve(raw_intent)
-            if intent != raw_intent and raw_intent:
-                logger.info(
-                    {
-                        "msg": "planner intent 已归一化",
-                        "raw": raw_intent,
-                        "resolved": intent,
-                    },
-                    ctx.trace_id,
-                )
-
-            subtasks.append(SubTask(id=f"sub-{i}", goal=sub_goal, required_skill=skill, intent=intent))
-
-        return Plan(subtasks=subtasks)
+def build_default_planner(skills: SkillRegistry, intents: IntentRegistry) -> Planner:
+    """默认 wiring：预加载模板，组装 4 个协作者。"""
+    prompt_builder = PlanPromptBuilder(skills=skills, intents=intents)
+    prompt_builder.preload()
+    return Planner(
+        cfg=PlannerConfig.from_config(),
+        prompt_builder=prompt_builder,
+        parser=PlanParser(),
+        normalizer=SubTaskNormalizer(skills=skills, intents=intents),
+    )

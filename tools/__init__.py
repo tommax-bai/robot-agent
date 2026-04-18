@@ -1,10 +1,16 @@
 """
-Tools 层：Agent 的环境交互能力。
-- actions: GUI 交互（click, scroll, paste, drag）
-- screenshot: 视觉感知（截屏 + base64）
-- cleanup: 环境管理（Chrome 清理）
-- screen: 坐标系转换（LLM 0-1000 → 物理像素）
-- llm_caller: LLM 统一调用接口
+tools/ 层：Agent 与外部世界交互的两类门面。
+
+- environment.Environment  — 执行环境协议（capture + perform）
+- llm.LlmTool              — LLM 调用门面
+
+三个内置 Environment 实现：
+- tools.macos_chrome.MacOSChromeEnv  — 本地 macOS Chrome（PyAutoGUI）
+- tools.cloud_mobile.CloudMobileEnv  — 阿里无影云手机（AgentBay SDK）
+- tools.remote.RemoteEnv             — 通过 HTTP 代理到 Session Service
+
+一个 Strategy 实现（不是 env）：
+- tools.remote.RemoteDelegateStrategy — agentbay 模式下的远程委托
 """
 
 from __future__ import annotations

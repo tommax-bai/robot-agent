@@ -52,7 +52,7 @@ import utils.logger as logger
 from agents.base import TaskResult
 
 if TYPE_CHECKING:
-    from runtime.context import RunContext
+    from runtime.ctx import RunContext
 ```
 
 使用 `TYPE_CHECKING` 的场景：
@@ -120,7 +120,7 @@ self._current_run: ActiveRun = None
 
 ## 6. Protocol 的使用
 
-当代码只依赖“能力”，不依赖具体实现时，使用 `Protocol`：
+当代码只依赖"能力"，不依赖具体实现时，使用 `Protocol`：
 
 ```python
 class AgentStateRepo(Protocol):
@@ -129,6 +129,14 @@ class AgentStateRepo(Protocol):
 ```
 
 这样 `JsonFileStateRepo` 和 `InMemoryStateRepo` 只要实现同样方法，就能被替换。它的价值是降低耦合，方便测试。
+
+项目中的关键 Protocol：
+
+- `services/state.py::AgentStateRepo` — 状态读写
+- `tools/environment.py::Environment` — 执行环境（`capture` + `perform`）
+- `agents/operator/strategy.py::SubtaskStrategy` — 子任务决策策略
+- `agents/operator/resolver.py::SubtaskResolver` — 子任务解析链
+- `services/vision/types.py::PageClassifier` — 页面分类器
 
 PHP 对照：Protocol 接近 interface，但 Python 是结构化类型，不要求显式 `implements`。
 
@@ -244,23 +252,23 @@ LLM 输出解析统一放在 `agents/base.py::Decision.parse()` 或对应解析�
 
 GUI 动作分四层（自上而下）：
 
-1. `VisionActionStep`：截图、调用 LLM、得到 `Decision`（也可被 `AgentBayDelegateStrategy` 替换为黑盒委托）。
+1. `VisionActionStep`（`agents/operator/vision/step.py`）：截图、调用 LLM、得到 `Decision`。可被 `AgentBayDelegateStrategy` / `RemoteDelegateStrategy` 替换为黑盒委托。
 2. `ActionDispatcher`：决定动作发给 skill tool 还是原子 action。
-3. `ActionBackend` Protocol（`tools/backends/__init__.py`）：抽象的 `screenshot` / `execute_action` 入口，决定动作落在哪个环境。
-4. Backend 实现：`MacOSChromeBackend`（PyAutoGUI / mss）或 `AgentBayBackend`（云手机 session）。
+3. `Environment` Protocol（`tools/environment.py`）：抽象的 `capture` / `perform` 入口，决定动作落在哪个环境。
+4. Environment 实现：`MacOSChromeEnv`（PyAutoGUI / ImageGrab）、`CloudMobileEnv`（阿里无影云手机 session）、`RemoteEnv`（HTTP 代理到 Session Service）。
 
-`ActionDispatcher` / `VisionActionStep` / `RecipeOperator` 都通过构造函数注入 backend，**不要**在业务代码里直接 `import tools.actions` 或 `import tools.screenshot`。
+`ActionDispatcher` / `VisionActionStep` / `RecipeOperator` 都通过构造函数注入 `Environment`，**不要**在业务代码里直接 `import tools.macos_chrome` 或 `import tools.cloud_mobile`。
 
 新增原子动作时：
 
-1. 在 `tools/actions.py::execute_action()` 增加 method 分支（macOS 实现）。
-2. 在 `tools/backends/agentbay.py::execute_action` 的 `match` 块加同名分支（云手机实现）。如果该动作在云手机上没有等价物（如 `move` 光标），返回 `{"ok": True, "message": "...已忽略", "finish": finish}` 而不是失败，避免打断 LLM 链路。
-3. 参数用 `get_param()`（macOS 端）/ `_get()`（AgentBay 端）做 LLM 脏键名兼容。
+1. 在 `tools/macos_chrome/actions.py::dispatch()` 增加 method 分支（macOS 实现）。
+2. 在 `tools/cloud_mobile/__init__.py::CloudMobileEnv._ACTION_HANDLERS` 注册同名分支，或加入 `_NOOP_ACTIONS`（在云手机上无等价物，如 `move` 光标）。
+3. 参数用 `tools.environment.coerce_param(params, key, default)` 做 LLM 脏键名兼容（所有 env 共用同一份实现）。
 4. 返回统一结构：`{"ok": bool, "message": str, "finish": bool}`。
 5. 不要让 action 直接读写 Agent 状态。
 6. 在 `prompts/operator/action.md` 里告诉 LLM 这个动作的存在与参数。
 
-只用于本地（例如依赖 macOS 系统快捷键）的动作可以只实现 macOS 端，但要在 prompt 里说明该动作仅在 `local_chrome` 模式可用，或在 AgentBay 端返回 `ok=False` 加明确 message。
+只用于本地（例如依赖 macOS 系统快捷键）的动作可以只实现 macOS 端，但要在 prompt 里说明该动作仅在 `local_chrome` 模式可用，或在 `CloudMobileEnv` 端明确返回 `ok=False`。
 
 ## 14. 可重复动作 Recipe 规范
 
@@ -303,7 +311,7 @@ Recipe 是“可验证动作链”，不是鼠标轨迹回放。
 
 ### 14.1 旁路行为总结
 
-`BehaviorSummarizer` 是动作记忆的 LLM 旁路。主线 subtask 成功后，它会在后台读取 `data/action_traces/<trace_id>.jsonl`，判断连续操作是否能总结成可复用行为。
+`BehaviorSummarizer`（`services/recipes/miner.py`）是动作记忆的 LLM 旁路。主线 subtask 成功后，`BehaviorSummarizerObserver`（`agents/operator/observer.py`）通知 summarizer 在后台读取 `data/action_traces/<trace_id>.jsonl`，判断连续操作是否能总结成可复用行为。
 
 默认输出位置：
 
@@ -380,9 +388,12 @@ git diff --check
 
 ```bash
 .venv/bin/python - <<'PY'
-from runtime.container import AppContainer
-container = AppContainer()
-print(type(container.supervisor).__name__)
+import config
+config.validate()
+from runtime import Host
+host = Host.boot(config.topology)
+for w in host.list():
+    print(w.account_id, type(w.env).__name__, type(w.strategy).__name__ if w.strategy else "minimal")
 PY
 ```
 

@@ -13,7 +13,7 @@ ActionDispatcher: 动作分发器。
 
 错误处理策略：
 - ToolNotFoundError → 转 ActionResult.failure 反馈给 LLM（LLM 可能幻觉了工具名，给它机会重试）
-- CancelledError → 必须 raise 透传，是任务取消信号
+- ControlSignal（CancelledError / StepBudgetExceededError 等） → 必须 raise 透传，是任务生命周期信号
 - 其他 Exception → 转 ActionResult.failure（动作执行可能临时失败，让 LLM 看到错误自适应）
 """
 
@@ -22,29 +22,27 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING
 
-import utils.logger as logger
 from agents.base import (
-    Action,
-    ActionOutcome,
-    ActionResult,
-    CancelledError,
+    ControlSignal,
     ToolNotFoundError,
 )
+from agents.operator.vision.types import Action, ActionOutcome, ActionResult
+from utils.events import Ev, ev
 
 if TYPE_CHECKING:
-    from runtime.context import RunContext
+    from runtime.ctx import RunContext
     from services.skill_registry import SkillRegistry
-    from tools.backends import ActionBackend
+    from tools.environment import Environment
 
 
 class ActionDispatcher:
-    def __init__(self, skills: SkillRegistry, backend: ActionBackend):
+    def __init__(self, skills: SkillRegistry, env: Environment):
         self._skills = skills
-        self._backend = backend
+        self._env = env
 
-    def set_backend(self, backend: ActionBackend) -> None:
-        """替换底层 ActionBackend（用于 runtime mode 热切换）。"""
-        self._backend = backend
+    def set_env(self, env: Environment) -> None:
+        """替换底层 Environment（用于 runtime mode 热切换）。"""
+        self._env = env
 
     async def dispatch(self, actions: list[Action], ctx: RunContext) -> ActionOutcome:
         results: list[ActionResult] = []
@@ -71,50 +69,47 @@ class ActionDispatcher:
         return ActionOutcome.continuing(results)
 
     async def _dispatch_skill_tool(self, action: Action, ctx: RunContext) -> ActionResult:
-        logger.info(
-            {"msg": "执行动态工具", "method": action.method, "params": action.params},
-            ctx.trace_id,
-        )
+        ev(Ev.ACTION_TOOL_INVOKED, method=action.method, params=action.params)
         try:
             # skill 脚本多半含同步 IO（selenium/网络/文件），丢线程池别堵 loop
             payload = await asyncio.to_thread(
                 self._skills.invoke_tool, action.method, action.params, trace_id=ctx.trace_id
             )
             return ActionResult(method=action.method, ok=True, payload=payload)
-        except CancelledError:
+        except ControlSignal:
             raise
         except ToolNotFoundError as e:
-            logger.warning(
-                {"msg": "工具不存在（LLM 可能幻觉）", "method": action.method},
-                ctx.trace_id,
-            )
+            ev(Ev.ACTION_TOOL_FAILED, method=action.method, reason="not_found",
+               error=str(e), level=30)  # WARNING: 幻觉而非崩溃
             return ActionResult(method=action.method, ok=False, message=str(e))
         except Exception as e:
-            logger.error(
-                {"msg": "动态工具执行失败", "method": action.method, "error": str(e)},
-                ctx.trace_id,
-            )
+            ev(Ev.ACTION_TOOL_FAILED, method=action.method, reason="exception",
+               error=str(e), exc_info=True)
             return ActionResult(method=action.method, ok=False, message=str(e))
 
     async def _dispatch_atomic(self, action: Action, ctx: RunContext) -> ActionResult:
         try:
-            # backend.execute_action 对 cloud 模式是 HTTP 同步调用，必须丢线程
+            # env.perform 对 cloud 模式是 HTTP 同步调用，必须丢线程
             raw = await asyncio.to_thread(
-                self._backend.execute_action,
+                self._env.perform,
                 ctx.trace_id,
                 {"method": action.method, "params": action.params},
             )
+            ok = bool(raw.get("ok"))
+            if ok:
+                ev(Ev.ACTION_ATOMIC_OK, method=action.method)
+            else:
+                ev(Ev.ACTION_ATOMIC_FAILED, method=action.method,
+                   reason="backend_not_ok", backend_message=str(raw.get("message", "")))
             return ActionResult(
                 method=action.method,
-                ok=bool(raw.get("ok")),
+                ok=ok,
                 message=str(raw.get("message", "")),
                 payload=raw,
             )
-        except CancelledError:
+        except ControlSignal:
             raise
         except Exception as e:
-            logger.error(
-                {"msg": "原子动作执行失败", "method": action.method, "error": str(e)},
-                ctx.trace_id,
-            )
+            ev(Ev.ACTION_ATOMIC_FAILED, method=action.method, reason="exception",
+               error=str(e), exc_info=True)
             return ActionResult(method=action.method, ok=False, message=str(e))

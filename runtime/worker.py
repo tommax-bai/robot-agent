@@ -1,13 +1,14 @@
 """
 Worker：单账号执行单元。
 
-每个 Worker 持有一份**完全独立**的执行链路：
-- 自己的 SessionManager（per-worker 云手机 session 生命周期）
-- 自己的 backend（动作执行）
-- 自己的 dispatcher / vision_step / recipe_operator / strategy / subtask_runner / operator / supervisor
+- 完整 Worker（minimal=False，默认）：持有 SessionManager + Environment +
+  Dispatcher + VisionStep + RecipeOperator + Strategy + SubtaskRunner +
+  Operator + Strategist + Supervisor。用于 monolith / brain 拓扑。
+- 精简 Worker（minimal=True）：只持有 SessionManager + Environment +
+  display_name。用于 session-only 拓扑（旧 SessionWorker 的角色）。
 
-共享的资源（LLM client、skills 词表、page registry、recipe 库、event bus、planner 等）由
-AppContainer 持有并注入。
+共享的无状态资源（LlmTool / SkillRegistry / Planner / RecipeStore 等）由 Host
+构造一次并注入，多个 Worker 共用。
 """
 
 from __future__ import annotations
@@ -15,99 +16,131 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING
 
-import config
-from agents.operator import (
-    ActionDispatcher,
-    AgentBayDelegateStrategy,
-    Operator,
-    RecipeOperator,
-    SubtaskRunner,
-    SubtaskStrategy,
-    VisionActionStep,
-)
-from agents.strategist import Strategist
-from agents.supervisor.supervisor import Supervisor
-from tools.backends import ActionBackend, AgentBayBackend, MacOSChromeBackend, SessionManager
+from runtime.events import Event, EventBus, payload
+from runtime.wire import build_env, build_session, build_strategy, close_env
+from tools.cloud_mobile import SessionManager
+from tools.environment import Environment
 
 if TYPE_CHECKING:
+    from agents.operator import SubtaskStrategy
     from agents.planner.planner import Planner
-    from runtime.event_bus import EventBus
-    from services.action_memory import BehaviorSummarizer, RecipeStore, TraceRecorder
-    from services.agent_state import AgentStateRepo
+    from services.recipes import BehaviorSummarizer, RecipeStore, TraceRecorder
     from services.skill_registry import SkillRegistry
+    from services.state import AgentStateRepo
     from services.vision import PageContextCache, VisualLocator
-    from tools.llm_tool import LlmTool
+    from tools.llm import LlmTool
 
 
 class Worker:
-    """单账号的执行单元。"""
+    """单账号执行单元。"""
 
     def __init__(
         self,
         *,
         account_id: str,
         mode: str,
-        state: AgentStateRepo,
         session_mgr: SessionManager | None,
-        backend: ActionBackend,
-        # 共享依赖
-        llm: LlmTool,
-        skills: SkillRegistry,
-        page_context_cache: PageContextCache,
-        visual_locator: VisualLocator,
-        recipe_store: RecipeStore,
-        trace_recorder: TraceRecorder,
-        behavior_summarizer: BehaviorSummarizer,
-        event_bus: EventBus,
-        planner: Planner,
+        env: Environment,
         account_cfg: dict | None = None,
+        display_name: str = "",
+        # 以下参数仅完整 Worker 需要；minimal Worker 可留空
+        state: "AgentStateRepo | None" = None,
+        llm: "LlmTool | None" = None,
+        skills: "SkillRegistry | None" = None,
+        page_context_cache: "PageContextCache | None" = None,
+        visual_locator: "VisualLocator | None" = None,
+        recipe_store: "RecipeStore | None" = None,
+        trace_recorder: "TraceRecorder | None" = None,
+        behavior_summarizer: "BehaviorSummarizer | None" = None,
+        events: EventBus | None = None,
+        planner: "Planner | None" = None,
+        minimal: bool = False,
     ):
         self.account_id = account_id
         self.mode = mode
         self.account_cfg = account_cfg or {}
-        self.state = state
+        self.display_name = display_name or account_id
         self.session_mgr = session_mgr
-        self.backend = backend
+        self.env = env
+        self.minimal = minimal
 
-        self._shared = {
-            "llm": llm,
-            "skills": skills,
-            "page_context_cache": page_context_cache,
-            "visual_locator": visual_locator,
-            "recipe_store": recipe_store,
-            "trace_recorder": trace_recorder,
-            "behavior_summarizer": behavior_summarizer,
-            "event_bus": event_bus,
-            "planner": planner,
-        }
+        if minimal:
+            # session-only 拓扑：不装配决策链
+            self.state = None
+            self.supervisor = None
+            self.strategist = None
+            self.operator = None
+            self.subtask_runner = None
+            self.strategy = None
+            self.vision_step = None
+            self.recipe_operator = None
+            self.dispatcher = None
+            self._events = events
+            self._swap_lock = asyncio.Lock()
+            return
 
-        self.strategist = Strategist(state=state, llm=llm)
-        self.dispatcher = ActionDispatcher(skills=skills, backend=backend)
-        self.vision_step = VisionActionStep(
-            skills=skills,
+        # 完整 Worker 装配
+        assert state is not None and llm is not None and skills is not None
+        assert page_context_cache is not None and visual_locator is not None
+        assert recipe_store is not None and trace_recorder is not None
+        assert behavior_summarizer is not None and events is not None and planner is not None
+
+        self.state = state
+        self._llm = llm
+        self._skills = skills
+        self._page_context_cache = page_context_cache
+        self._visual_locator = visual_locator
+        self._recipe_store = recipe_store
+        self._trace_recorder = trace_recorder
+        self._behavior_summarizer = behavior_summarizer
+        self._events = events
+        self._planner = planner
+
+        from agents.operator import (
+            ActionDispatcher,
+            RecipeOperator,
+            VisionConfig,
+            VisionPromptBuilder,
+            build_default_subtask_runner,
+            build_default_vision_action_step,
+        )
+        from agents.operator.operator import Operator
+        from agents.strategist import build_default_strategist
+        from agents.supervisor.supervisor import Supervisor
+
+        self.strategist = build_default_strategist(llm)
+        self.dispatcher = ActionDispatcher(skills=skills, env=env)
+
+        self._vision_cfg = VisionConfig.from_config()
+        self._vision_prompt_builder = VisionPromptBuilder(skills=skills)
+        self._vision_prompt_builder.preload()
+
+        self.vision_step = build_default_vision_action_step(
             dispatcher=self.dispatcher,
-            backend=backend,
+            env=env,
+            skills=skills,
             recorder=trace_recorder,
             page_cache=page_context_cache,
             mode=mode,
+            cfg=self._vision_cfg,
+            prompt_builder=self._vision_prompt_builder,
         )
         self.recipe_operator = RecipeOperator(
             dispatcher=self.dispatcher,
             recipes=recipe_store,
             page_cache=page_context_cache,
             locator=visual_locator,
-            backend=backend,
+            env=env,
             recorder=trace_recorder,
         )
-        self.strategy: SubtaskStrategy = build_strategy(
-            mode, backend=backend, vision_step=self.vision_step,
+        self.strategy = build_strategy(
+            mode, vision_step=self.vision_step,
             session_mgr=session_mgr, account_cfg=account_cfg,
         )
-        self.subtask_runner = SubtaskRunner(
+        self.subtask_runner = build_default_subtask_runner(
             strategy=self.strategy,
             recipe_operator=self.recipe_operator,
             behavior_summarizer=behavior_summarizer,
-            max_resumes=2,
         )
         self.operator = Operator(planner=planner, runner=self.subtask_runner)
         self.supervisor = Supervisor(
@@ -115,14 +148,17 @@ class Worker:
             strategist=self.strategist,
             state=state,
             llm=llm,
-            event_bus=event_bus,
+            event_bus=events,
             account_id=account_id,
         )
-
         self._swap_lock = asyncio.Lock()
 
+    # ─── 热切换 ────────────────────────────────────────────────
+
     async def swap_runtime_mode(self, new_mode: str) -> dict:
-        """热切换本 worker 的 runtime.mode。"""
+        if self.minimal:
+            raise RuntimeError("minimal worker 不支持 swap_runtime_mode")
+
         valid = {"local_chrome", "cloudmobile", "agentbay"}
         if new_mode not in valid:
             raise ValueError(f"未知 mode={new_mode}，可选: {sorted(valid)}")
@@ -132,83 +168,77 @@ class Worker:
             if new_mode == old_mode:
                 return {"ok": True, "message": f"已经处于 {new_mode}，未作切换", "mode": new_mode}
 
-            if self.supervisor.has_active_task():
-                run = self.supervisor.current_run
+            if self.supervisor.is_busy():
+                snap = self.supervisor.status()
                 raise RuntimeError(
-                    f"worker={self.account_id} 当前任务 trace={run.trace_id} 正在运行，"
+                    f"worker={self.account_id} 当前任务 trace={snap.current_trace_id} 正在运行，"
                     "请先等其结束或调 /api/v1/agent/cancel 取消"
                 )
 
-            import utils.logger as _logger
+            import utils.logger as log
 
-            _logger.info(
-                {"msg": "runtime.mode hot-swap 开始", "account": self.account_id, "old": old_mode, "new": new_mode}
-            )
+            log.info({"msg": "runtime.mode hot-swap 开始", "account": self.account_id,
+                      "old": old_mode, "new": new_mode})
 
             if self.session_mgr is not None:
                 try:
                     self.session_mgr.release()
                 except Exception as e:
-                    _logger.warning({"msg": "旧 session 释放异常（继续切换）", "error": str(e)})
+                    log.warning({"msg": "旧 session 释放异常（继续切换）", "error": str(e)})
+
+            from agents.operator import build_default_vision_action_step
 
             try:
-                new_session_mgr = build_session_mgr(
-                    new_mode, self.account_cfg, self._shared["event_bus"], self.account_id,
-                )
-                new_backend = build_backend(new_mode, self.account_cfg, session_mgr=new_session_mgr)
-                new_vision = VisionActionStep(
-                    skills=self._shared["skills"],
+                new_session = build_session(new_mode, self.account_cfg, self._events, self.account_id)
+                new_env = build_env(new_mode, self.account_cfg, session_mgr=new_session)
+                new_vision = build_default_vision_action_step(
                     dispatcher=self.dispatcher,
-                    backend=new_backend,
-                    recorder=self._shared["trace_recorder"],
-                    page_cache=self._shared["page_context_cache"],
+                    env=new_env,
+                    skills=self._skills,
+                    recorder=self._trace_recorder,
+                    page_cache=self._page_context_cache,
                     mode=new_mode,
+                    cfg=self._vision_cfg,
+                    prompt_builder=self._vision_prompt_builder,
                 )
                 new_strategy = build_strategy(
-                    new_mode, backend=new_backend, vision_step=new_vision,
-                    session_mgr=new_session_mgr, account_cfg=self.account_cfg,
+                    new_mode, vision_step=new_vision,
+                    session_mgr=new_session, account_cfg=self.account_cfg,
                 )
             except Exception as e:
-                _logger.error({"msg": "新 backend 构造失败", "target_mode": new_mode, "error": str(e)})
+                log.error({"msg": "新 env 构造失败", "target_mode": new_mode, "error": str(e)})
                 raise
 
+            old_env = self.env
             self.mode = new_mode
-            self.session_mgr = new_session_mgr
-            self.backend = new_backend
-            self.dispatcher.set_backend(new_backend)
-            self.vision_step._backend = new_backend
-            self.recipe_operator.set_backend(new_backend)
+            self.session_mgr = new_session
+            self.env = new_env
+            self.dispatcher.set_env(new_env)
+            self.vision_step = new_vision
+            self.recipe_operator.set_env(new_env)
             self.strategy = new_strategy
             self.subtask_runner.set_strategy(new_strategy)
 
-            from runtime.event_bus import EVT_RUNTIME_CHANGED, make_event_payload
+            close_env(old_env)
 
-            self._shared["event_bus"].publish(
-                EVT_RUNTIME_CHANGED,
-                make_event_payload(
-                    account=self.account_id,
-                    old_mode=old_mode,
-                    new_mode=new_mode,
-                    backend=type(new_backend).__name__,
+            self._events.publish(
+                Event.RUNTIME_CHANGED,
+                payload(
+                    account=self.account_id, old_mode=old_mode, new_mode=new_mode,
+                    env=type(new_env).__name__,
                     strategy=type(new_strategy).__name__,
                 ),
             )
-            _logger.info(
-                {
-                    "msg": "runtime.mode hot-swap 完成",
-                    "account": self.account_id,
-                    "mode": new_mode,
-                    "backend": type(new_backend).__name__,
-                    "strategy": type(new_strategy).__name__,
-                }
-            )
+            log.info({"msg": "runtime.mode hot-swap 完成", "account": self.account_id,
+                      "mode": new_mode, "env": type(new_env).__name__,
+                      "strategy": type(new_strategy).__name__})
             return {
-                "ok": True,
-                "account": self.account_id,
-                "mode": new_mode,
-                "backend": type(new_backend).__name__,
+                "ok": True, "account": self.account_id, "mode": new_mode,
+                "env": type(new_env).__name__,
                 "strategy": type(new_strategy).__name__,
             }
+
+    # ─── 生命周期 ─────────────────────────────────────────────
 
     def shutdown(self) -> None:
         if self.session_mgr is not None:
@@ -216,6 +246,7 @@ class Worker:
                 self.session_mgr.release()
             except Exception:
                 pass
+        close_env(self.env)
 
     def release_session(self, force: bool = False) -> dict:
         """主动释放当前 session（停计费、登录态丢失）。"""
@@ -226,25 +257,25 @@ class Worker:
                 "message": f"当前 mode={self.mode} 无云手机 session，noop",
             }
 
-        if self.supervisor.has_active_task():
+        if not self.minimal and self.supervisor.is_busy():
             if not force:
-                run = self.supervisor.current_run
+                snap = self.supervisor.status()
                 raise RuntimeError(
-                    f"worker={self.account_id} 当前任务 trace={run.trace_id} 正在运行，"
+                    f"worker={self.account_id} 当前任务 trace={snap.current_trace_id} 正在运行，"
                     "请先等其结束或调 /api/v1/agent/cancel 取消"
                 )
             try:
-                self.supervisor.request_cancel("force_release")
+                self.supervisor.request_stop("force_release")
             except Exception:
                 pass
 
-        import utils.logger as _logger
+        import utils.logger as log
 
-        _logger.info({"msg": "主动释放 session", "account": self.account_id})
+        log.info({"msg": "主动释放 session", "account": self.account_id})
         try:
             self.session_mgr.release()
         except Exception as e:
-            _logger.warning({"msg": "release_session 异常（继续）", "error": str(e)})
+            log.warning({"msg": "release_session 异常（继续）", "error": str(e)})
         return {
             "ok": True,
             "account": self.account_id,
@@ -252,94 +283,4 @@ class Worker:
         }
 
 
-# ─── 工厂函数 ────────────────────────────────────────────────
-
-def _is_remote_mode() -> bool:
-    return bool(config.agent["runtime"].get("session_service_url"))
-
-
-def build_session_mgr(
-    mode: str,
-    account_cfg: dict | None,
-    event_bus: EventBus,
-    account_id: str,
-) -> SessionManager | None:
-    """云端模式构造 SessionManager。remote 模式或 local_chrome 返回 None。"""
-    if mode == "local_chrome" or _is_remote_mode():
-        return None
-    ab = config.agent["runtime"]["agentbay"]
-    cfg = account_cfg or {}
-    return SessionManager(
-        api_key=ab["api_key"],
-        image_id=cfg.get("image_id") or ab["image_id"],
-        idle_release_timeout=ab.get("idle_release_timeout"),
-        mode=mode,
-        event_bus=event_bus,
-        account_id=account_id,
-    )
-
-
-def build_backend(
-    mode: str,
-    account_cfg: dict | None = None,
-    session_mgr: SessionManager | None = None,
-) -> ActionBackend:
-    rt = config.agent["runtime"]
-    session_url = rt.get("session_service_url", "")
-
-    # 远程模式：截图/动作通过 HTTP 调 Session Service
-    if session_url and mode in ("cloudmobile", "agentbay"):
-        from tools.backends.remote import RemoteBackend
-        account_id = (account_cfg or {}).get("id") or "default"
-        return RemoteBackend(
-            session_service_url=session_url,
-            account_id=account_id,
-            api_key=rt.get("session_service_api_key", ""),
-            mode=mode,
-        )
-
-    match mode:
-        case "local_chrome":
-            return MacOSChromeBackend()
-        case "cloudmobile" | "agentbay":
-            if session_mgr is None:
-                raise RuntimeError("云端模式必须提供 SessionManager")
-            ab = rt["agentbay"]
-            cfg = account_cfg or {}
-            return AgentBayBackend(
-                session_mgr=session_mgr,
-                screenshot_format=cfg.get("screenshot_format") or ab["screenshot_format"],
-                mode=mode,
-            )
-        case _:
-            raise RuntimeError(f"未知 mode={mode!r}，可选值: local_chrome / cloudmobile / agentbay")
-
-
-def build_strategy(
-    mode: str,
-    *,
-    backend: ActionBackend,
-    vision_step: VisionActionStep,
-    session_mgr: SessionManager | None = None,
-    account_cfg: dict | None = None,
-) -> SubtaskStrategy:
-    rt = config.agent["runtime"]
-    session_url = rt.get("session_service_url", "")
-
-    match mode:
-        case "local_chrome" | "cloudmobile":
-            return vision_step
-        case "agentbay":
-            if session_url:
-                from tools.backends.remote_delegate import RemoteDelegateStrategy
-                account_id = (account_cfg or {}).get("id") or "default"
-                return RemoteDelegateStrategy(
-                    session_service_url=session_url,
-                    account_id=account_id,
-                    api_key=rt.get("session_service_api_key", ""),
-                )
-            if session_mgr is None:
-                raise RuntimeError("agentbay 模式必须提供 SessionManager")
-            return AgentBayDelegateStrategy(session_mgr=session_mgr)
-        case _:
-            raise RuntimeError(f"未知 mode={mode!r}")
+__all__ = ["Worker"]

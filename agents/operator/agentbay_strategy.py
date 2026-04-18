@@ -14,14 +14,18 @@ from typing import TYPE_CHECKING
 
 import utils.logger as logger
 from agents.base import AgentError, TaskResult
-from tools.backends.session_manager import is_session_dead_error
+from tools.cloud_mobile.session import is_session_dead_error
 
 if TYPE_CHECKING:
     from agents.base import SubTask
-    from runtime.context import RunContext
-    from tools.backends.session_manager import SessionManager
+    from runtime.ctx import RunContext
+    from tools.cloud_mobile.session import SessionManager
 
 _DEFAULT_TASK_TIMEOUT_SECONDS = 300
+# mobile_use Agent 单次委托的最大步数。超过此值云端会主动停止（防死循环 / 成本兜底）。
+_MOBILE_USE_MAX_STEPS = 50
+# cancel 轮询间隔：取消信号从 ctx.cancel 到送达云端的上限延迟
+_CANCEL_POLL_INTERVAL_SECONDS = 0.2
 
 
 class AgentBayDelegateStrategy:
@@ -72,7 +76,7 @@ class AgentBayDelegateStrategy:
             exec_handle = await asyncio.to_thread(
                 mobile_agent.execute_task,
                 subtask.goal,
-                50,
+                _MOBILE_USE_MAX_STEPS,
                 None,
                 _on_content,
                 _on_tool_call,
@@ -89,30 +93,31 @@ class AgentBayDelegateStrategy:
         )
 
         async def _cancel_watcher():
-            while True:
+            # 进入时立刻检查一次，避免 cancel 在启动前已触发却仍等一个轮询周期才响应
+            while not ctx.cancel.cancelled:
                 try:
-                    await asyncio.sleep(1.0)
+                    await asyncio.sleep(_CANCEL_POLL_INTERVAL_SECONDS)
                 except asyncio.CancelledError:
                     return
-                if ctx.cancel.cancelled:
-                    if ws_handle is not None:
-                        logger.info({"msg": "[agentbay] 检测到 cancel，调 ws_handle.cancel() 中止流式任务"}, ctx.trace_id)
-                        try:
-                            await asyncio.to_thread(ws_handle.cancel)
-                        except Exception as e:
-                            logger.warning({"msg": "[agentbay] ws_handle.cancel 异常", "error": str(e)}, ctx.trace_id)
-                    elif task_id:
-                        logger.info({"msg": "[agentbay] 检测到 cancel，调 terminate_task", "task_id": task_id}, ctx.trace_id)
-                        try:
-                            await asyncio.to_thread(mobile_agent.terminate_task, task_id)
-                        except Exception as e:
-                            logger.warning({"msg": "[agentbay] terminate_task 异常", "error": str(e)}, ctx.trace_id)
-                    else:
-                        logger.warning(
-                            {"msg": "[agentbay] 无 ws_handle 也无 task_id，cancel 信号无法送达云端（任务会跑到 max_steps 自然结束）"},
-                            ctx.trace_id,
-                        )
-                    return
+            if ws_handle is not None:
+                logger.info({"msg": "[agentbay] 检测到 cancel，调 ws_handle.cancel() 中止流式任务"}, ctx.trace_id)
+                # shield: 外层 finally 的 watcher.cancel() 不应打断已经在跑的取消 RPC,
+                # 否则云端可能残留任务继续跑到 max_steps
+                try:
+                    await asyncio.shield(asyncio.to_thread(ws_handle.cancel))
+                except Exception as e:
+                    logger.warning({"msg": "[agentbay] ws_handle.cancel 异常", "error": str(e)}, ctx.trace_id)
+            elif task_id:
+                logger.info({"msg": "[agentbay] 检测到 cancel，调 terminate_task", "task_id": task_id}, ctx.trace_id)
+                try:
+                    await asyncio.shield(asyncio.to_thread(mobile_agent.terminate_task, task_id))
+                except Exception as e:
+                    logger.warning({"msg": "[agentbay] terminate_task 异常", "error": str(e)}, ctx.trace_id)
+            else:
+                logger.warning(
+                    {"msg": "[agentbay] 无 ws_handle 也无 task_id，cancel 信号无法送达云端（任务会跑到 max_steps 自然结束）"},
+                    ctx.trace_id,
+                )
 
         watcher = asyncio.create_task(_cancel_watcher())
         try:

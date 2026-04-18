@@ -1,51 +1,24 @@
-"""视觉定位工具：为 recipe 执行提供模板匹配定位能力。
+"""services.vision.locator: 视觉模板定位。
 
-Template matching uses OpenCV when it is installed. The dependency is optional:
-when cv2/numpy are unavailable or a template cannot be matched confidently, the
-locator reports a miss and the caller should fall back to the LLM path.
+两种 locator：
+- `point`    —— 直接按 0-1000 归一化坐标定位，无匹配开销
+- `template` —— OpenCV 模板匹配（optional dep）。阈值不达标返回 miss，调用方
+                 应走 LLM 回退路径
+
+cv2/numpy 是可选依赖：缺失时 `template` 路径返回 `ok=False`，不抛。
 """
 
 from __future__ import annotations
 
 import base64
-from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
 from typing import Any
 
 from PIL import Image
 
-from agents.base import Observation
-
-
-@dataclass(frozen=True)
-class BBox:
-    x1: int
-    y1: int
-    x2: int
-    y2: int
-
-    @property
-    def center(self) -> tuple[int, int]:
-        return ((self.x1 + self.x2) // 2, (self.y1 + self.y2) // 2)
-
-
-@dataclass(frozen=True)
-class LocateResult:
-    ok: bool
-    reason: str = ""
-    score: float = 0.0
-    bbox: BBox | None = None
-    image_size: tuple[int, int] | None = None
-
-    def center_norm(self) -> tuple[int, int] | None:
-        if self.bbox is None or self.image_size is None:
-            return None
-        width, height = self.image_size
-        cx, cy = self.bbox.center
-        if width <= 0 or height <= 0:
-            return None
-        return round(cx / width * 1000), round(cy / height * 1000)
+from services.contracts import Observation
+from services.vision.types import BBox, LocateResult
 
 
 class VisualLocator:
@@ -61,7 +34,7 @@ class VisualLocator:
         return LocateResult(ok=False, reason=f"unsupported locator type: {locator_type}")
 
     def _locate_point(self, observation: Observation, spec: dict[str, Any]) -> LocateResult:
-        image = self._decode_observation(observation)
+        image = _decode(observation)
         width, height = image.size
         x = spec.get("x")
         y = spec.get("y")
@@ -69,12 +42,7 @@ class VisualLocator:
             return LocateResult(ok=False, reason="point locator requires x/y")
         px = int(float(x) / 1000 * width)
         py = int(float(y) / 1000 * height)
-        return LocateResult(
-            ok=True,
-            score=1.0,
-            bbox=BBox(px, py, px, py),
-            image_size=(width, height),
-        )
+        return LocateResult(ok=True, score=1.0, bbox=BBox(px, py, px, py), image_size=(width, height))
 
     def _locate_template(self, observation: Observation, spec: dict[str, Any]) -> LocateResult:
         try:
@@ -87,9 +55,9 @@ class VisualLocator:
         if not template_path.exists():
             return LocateResult(ok=False, reason=f"template not found: {template_path}")
 
-        image = self._decode_observation(observation).convert("RGB")
+        image = _decode(observation).convert("RGB")
         width, height = image.size
-        region = self._region_to_pixels(spec.get("region"), width, height)
+        region = _region_to_pixels(spec.get("region"), width, height)
         cropped = image.crop((region.x1, region.y1, region.x2, region.y2))
 
         source = cv2.cvtColor(np.array(cropped), cv2.COLOR_RGB2GRAY)
@@ -100,6 +68,7 @@ class VisualLocator:
             return LocateResult(ok=False, reason="template larger than search region")
 
         if float(np.std(template)) < 1.0:
+            # 纯色模板：改用 SQDIFF 避免除零
             result = cv2.matchTemplate(source, template, cv2.TM_SQDIFF)
             min_val, _, min_loc, _ = cv2.minMaxLoc(result)
             max_diff = 255.0 * 255.0 * float(template.size)
@@ -110,6 +79,7 @@ class VisualLocator:
             _, max_val, _, max_loc = cv2.minMaxLoc(result)
             score = float(max_val)
             match_loc = max_loc
+
         threshold = float(spec.get("threshold", 0.8))
         if score < threshold:
             return LocateResult(ok=False, reason="template score below threshold", score=score)
@@ -118,12 +88,7 @@ class VisualLocator:
         y1 = region.y1 + int(match_loc[1])
         x2 = x1 + int(template.shape[1])
         y2 = y1 + int(template.shape[0])
-        return LocateResult(
-            ok=True,
-            score=score,
-            bbox=BBox(x1=x1, y1=y1, x2=x2, y2=y2),
-            image_size=(width, height),
-        )
+        return LocateResult(ok=True, score=score, bbox=BBox(x1, y1, x2, y2), image_size=(width, height))
 
     def _resolve_template_path(self, template: str) -> Path:
         path = Path(template)
@@ -131,34 +96,37 @@ class VisualLocator:
             return path
         return self._template_root / template
 
-    @staticmethod
-    def _decode_observation(observation: Observation) -> Image.Image:
-        return Image.open(BytesIO(base64.b64decode(observation.image_base64)))
 
-    @staticmethod
-    def _region_to_pixels(region: dict | None, width: int, height: int) -> BBox:
-        if not region:
-            return BBox(0, 0, width, height)
+def _decode(observation: Observation) -> Image.Image:
+    return Image.open(BytesIO(base64.b64decode(observation.image_base64)))
 
-        if {"x1", "y1", "x2", "y2"}.issubset(region):
-            x1 = float(region["x1"])
-            y1 = float(region["y1"])
-            x2 = float(region["x2"])
-            y2 = float(region["y2"])
-        else:
-            x = float(region.get("x", 0.0))
-            y = float(region.get("y", 0.0))
-            w = float(region.get("w", 1.0))
-            h = float(region.get("h", 1.0))
-            x1, y1, x2, y2 = x, y, x + w, y + h
 
-        if max(x1, y1, x2, y2) <= 1.0:
-            x1, x2 = x1 * width, x2 * width
-            y1, y2 = y1 * height, y2 * height
+def _region_to_pixels(region: dict | None, width: int, height: int) -> BBox:
+    if not region:
+        return BBox(0, 0, width, height)
 
-        return BBox(
-            x1=max(0, min(width, int(x1))),
-            y1=max(0, min(height, int(y1))),
-            x2=max(0, min(width, int(x2))),
-            y2=max(0, min(height, int(y2))),
-        )
+    if {"x1", "y1", "x2", "y2"}.issubset(region):
+        x1 = float(region["x1"])
+        y1 = float(region["y1"])
+        x2 = float(region["x2"])
+        y2 = float(region["y2"])
+    else:
+        x = float(region.get("x", 0.0))
+        y = float(region.get("y", 0.0))
+        w = float(region.get("w", 1.0))
+        h = float(region.get("h", 1.0))
+        x1, y1, x2, y2 = x, y, x + w, y + h
+
+    if max(x1, y1, x2, y2) <= 1.0:
+        x1, x2 = x1 * width, x2 * width
+        y1, y2 = y1 * height, y2 * height
+
+    return BBox(
+        x1=max(0, min(width, int(x1))),
+        y1=max(0, min(height, int(y1))),
+        x2=max(0, min(width, int(x2))),
+        y2=max(0, min(height, int(y2))),
+    )
+
+
+__all__ = ["VisualLocator"]

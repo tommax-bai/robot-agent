@@ -4,17 +4,31 @@
 - 开发规范：`docs/development_guide.md`
 - AI 助手协作说明：`CLAUDE.md`
 
-## 执行模式（agent.runtime.mode）
+## 两个正交维度：runtime mode + topology
 
-通过环境变量 `AGENT_RUNTIME_MODE` 在三种模式间切换。三种模式正交于"环境（Backend）"和"决策（Strategy）"两个维度：
+### 运行时模式（`AGENT_RUNTIME_MODE`，每个 worker 独立）
 
-| mode | Backend | Strategy | 适用 |
-|------|---------|----------|------|
-| `local_chrome`（默认） | `MacOSChromeBackend`：PyAutoGUI + ImageGrab | `VisionActionStep`：自家 VLM 视觉循环 | 本地开发/调试 |
-| `cloudmobile` | `AgentBayBackend`：阿里无影云手机 session | `VisionActionStep`：同上 | 矩阵账号生产、防风控 |
-| `agentbay` | `AgentBayBackend` | `AgentBayDelegateStrategy`：委托给 AgentBay 内置 mobile_use Agent | 任务原型/兜底，决策黑盒 |
+通过环境变量在三种模式间切换。三种模式正交于"环境（Environment）"和"决策（Strategy）"两个维度：
+
+| mode | Environment | Strategy | 适用 |
+|------|-------------|----------|------|
+| `local_chrome`（默认） | `MacOSChromeEnv`：PyAutoGUI + ImageGrab | `VisionActionStep`：自家 VLM 视觉循环 | 本地开发/调试 |
+| `cloudmobile` | `CloudMobileEnv`：阿里无影云手机 session | `VisionActionStep`：同上 | 矩阵账号生产、防风控 |
+| `agentbay` | `CloudMobileEnv` | `AgentBayDelegateStrategy`：委托给 AgentBay 内置 mobile_use Agent | 任务原型/兜底，决策黑盒 |
 
 三种模式都先尝试 `RecipeOperator` 快路径（命中即跳过 Strategy）。云端模式下 recipe 的 tap/swipe 自动走 AgentBay。
+
+### 进程拓扑（`AGENT_TOPOLOGY`，每个进程决定）
+
+**唯一入口是 `app.py`**，老的 `app_brain.py` / `app_session.py` 已删除。拓扑由 env 决定：
+
+| topology | 角色 | 说明 |
+|----------|------|------|
+| `monolith`（默认） | brain + session 合体 | 本地开发、单机生产 |
+| `brain` | 只跑决策层 | 需要 `SESSION_SERVICE_URL`，通过 HTTP 调远程 Session |
+| `session` | 只跑云手机 session | 需要 `AGENTBAY_API_KEY`，对外暴露 `/session/*` |
+
+拓扑拆分时 Brain 侧的 `CloudMobileEnv` 会被 `RemoteEnv` 替换，`AgentBayDelegateStrategy` 会被 `RemoteDelegateStrategy` 替换——Agent 层完全无感。
 
 ### 切换示例
 
@@ -45,14 +59,17 @@ curl http://127.0.0.1:6702/api/v1/agent/runtime
 
 ```json
 {
+  "account_id": "default",
   "mode": "cloudmobile",
-  "backend": "AgentBayBackend",
+  "env": "CloudMobileEnv",
   "strategy": {"type": "VisionActionStep", "name": "vision_action"},
   "agentbay": {
     "image_id": "mobile_latest",
-    "screenshot_format": "jpeg",
+    "session_state": "idle",
     "session_active": false,
-    "screen_size": {"width": 0, "height": 0}
+    "session_id": null,
+    "screen_size": {"width": 0, "height": 0},
+    "live_view_url": null
   }
 }
 ```
@@ -63,7 +80,7 @@ curl http://127.0.0.1:6702/api/v1/agent/runtime
 
 启动服务后浏览器打开 `http://127.0.0.1:6702/dashboard`，可以看到：
 
-- 当前 runtime / backend / strategy / supervisor 状态
+- 当前 runtime / env / strategy / supervisor 状态
 - 云端模式：iframe 嵌入阿里 `live_view_url`，**实时看云手机屏幕**
 - 本地模式：`/api/v1/agent/screen.jpg` 每 2s 刷新，看本机 Chrome 截图
 - 操作面板：debug/waiting 切换、patrol 开关、提交任务、取消任务
@@ -95,9 +112,9 @@ AGENT_HTTP_PORT=6702 uvicorn app:app --host 0.0.0.0 --port 6702
 
 仅在你**完全信任** LAN 内所有设备时启用。生产部署请在反向代理（Nginx / Caddy）上加 basic auth 或 IP 白名单。
 
-## 多账号矩阵（WorkerPool）
+## 多账号矩阵（Host + Workers）
 
-`config.agent["accounts"]` 配置一个 account 列表，每项一个独立 worker：
+`config.settings.agent.accounts` 配置一个 account 列表，进程启动时 `Host.boot()` 为每项创建一个独立 `Worker`：
 
 ```python
 "accounts": [
@@ -111,8 +128,8 @@ AGENT_HTTP_PORT=6702 uvicorn app:app --host 0.0.0.0 --port 6702
 每个 worker 拥有：
 - 独立的 `data/accounts/{id}/agent_state.json` 状态（知识 / daily_stats / inspiration_pool）
 - 独立的 AgentBay session（云手机实例，按时长各自计费）
-- 独立的 supervisor / backend / strategy / runtime mode 切换（互不干扰）
-- 共享：LLM 客户端、技能词表、recipe 库、page registry、event bus、Planner
+- 独立的 supervisor / env / strategy / runtime mode 切换（互不干扰）
+- 共享（挂在 `Host` 上）：LLM 客户端、skill pack 注册表、recipe store、page classifier cache、event bus、Planner、Strategist
 
 ### 登录流程（每 session 扫码一次）
 
@@ -184,7 +201,7 @@ curl -X POST http://localhost:6702/api/v1/agent/session/release \
 
 进程异常退出（SIGKILL / OOM）会留下云端 session 继续计费。两道防线：
 
-1. **启动时自动清**：`AppContainer` 初始化时调 `AgentBay.list()` 检测上次残留的 session 全部 delete。  
+1. **启动时自动清**：`Host.boot()` 调 `tools.cloud_mobile.cleanup_orphan_sessions()` 把上次残留的 session 全部 delete。  
    关闭开关：`AGENT_AUTO_CLEANUP_ORPHANS=false`（多副本同 API key 部署时必须关）
 2. **云端 idle 回收**：CreateSession 带 `idle_release_timeout=600`，10 分钟无操作云端自动销毁。  
    调整：`AGENTBAY_IDLE_RELEASE_TIMEOUT=3600`

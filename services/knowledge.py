@@ -1,10 +1,11 @@
-"""
-知识收割模块：从任务总结中提取标题、笔记、话题、灵感等，并持久化。
+"""services.knowledge: 从任务总结文本中提炼知识并写回 state。
 
-设计原则：
-- 所有函数都接收 state repo，不再依赖 default_repo() 或全局函数
-- harvest_knowledge 通过副作用更新 state，无返回值
-- get_evolution_context 是纯查询，返回 EvolutionContext dataclass
+职责：
+- `harvest(summary, trace_id, state)` —— 从 `[SHOT]` / `[CONTENT]` / `[TAG]` /
+  `[LEARNING]` / `[ANXIETY]` / `[KNOWLEDGE]` / `[MOOD]` / `[INSIGHT]` 等标签解析
+  出学习成果并通过副作用写入 state（不返回）。
+- `evolution_snapshot(state, title_few_shots)` —— 基于 state 丰富度计算注意力
+  权重（首页 vs 搜索），供 Strategist 决策使用。纯查询。
 """
 
 from __future__ import annotations
@@ -19,12 +20,25 @@ import config
 import utils.logger as logger
 
 if TYPE_CHECKING:
-    from services.agent_state import AgentStateRepo
+    from services.state import AgentStateRepo
+
+_SHOT_CONTENT = re.compile(
+    r"[\[【]SHOT[\]】][:：]?\s*(.*?)\s*[\[【]CONTENT[\]】][:：]?\s*(.*?)(?=[\[【]SHOT[\]】]|$)",
+    re.DOTALL,
+)
+_SHOT_ONLY = re.compile(r"[\[【]SHOT[\]】][:：]?\s*(.+)")
+_LEARNING = re.compile(r"[\[【]LEARNING[\]】][:：]?\s*(.+)")
+_TAG_LINE = re.compile(r"[\[【]TAG[\]】][:：]?\s*(.+)")
+_ANXIETY = re.compile(r"[\[【]ANXIETY[\]】][:：]?\s*(.+)")
+_KNOWLEDGE = re.compile(r"[\[【]KNOWLEDGE[\]】][:：]?\s*(.+)")
+_MOOD = re.compile(r"[\[【]MOOD[\]】][:：]?\s*(\w+)")
+_INSIGHT_LINE = re.compile(r"[\[【]INSIGHT[\]】][:：]?\s*(.+)")
+_HASH_WORD = re.compile(r"#(\w+)")
 
 
 @dataclass(frozen=True)
 class EvolutionContext:
-    """Agent 的进化状态与注意力权重"""
+    """Agent 进化状态与注意力权重。"""
 
     home_weight: float
     search_weight: float
@@ -33,10 +47,7 @@ class EvolutionContext:
 
 
 def harvest_knowledge(summary: str, trace_id: str, state: AgentStateRepo) -> None:
-    """
-    从任务总结中收割知识，写回 state repo。
-    无返回值——通过副作用更新 state。
-    """
+    """从 summary 提取知识标签，写回 state。副作用型 API，无返回。"""
     if not summary:
         return
 
@@ -44,13 +55,11 @@ def harvest_knowledge(summary: str, trace_id: str, state: AgentStateRepo) -> Non
     title_few_shots = list(snapshot["title_few_shots"])
     inspiration_pool = list(snapshot["inspiration_pool"])
 
-    # 1. 提取爆款标题 [SHOT] 和 对应正文 [CONTENT]
-    note_matches = re.findall(
-        r"[\[【]SHOT[\]】][:：]?\s*(.*?)\s*[\[【]CONTENT[\]】][:：]?\s*(.*?)(?=[\[【]SHOT[\]】]|$)", summary, re.DOTALL
-    )
-    if note_matches:
-        save_enabled = config.agent["storage"]["save_titles_to_local"]
-        for title, content in note_matches:
+    # 1. [SHOT] + [CONTENT] / 兼容纯 [SHOT]
+    note_pairs = _SHOT_CONTENT.findall(summary)
+    if note_pairs:
+        save_enabled = config.settings.agent.storage.save_titles_to_local
+        for title, content in note_pairs:
             title = title.strip()
             content = content.strip()
             if not title:
@@ -59,43 +68,30 @@ def harvest_knowledge(summary: str, trace_id: str, state: AgentStateRepo) -> Non
                 title_few_shots.append(title)
             if save_enabled and content:
                 _save_note_detail(title, content)
-        logger.info({"msg": f"收割到 {len(note_matches)} 条笔记详情"}, trace_id)
+        logger.info({"msg": f"收割到 {len(note_pairs)} 条笔记详情"}, trace_id)
     else:
-        # 兼容旧格式
-        new_shots = re.findall(r"[\[【]SHOT[\]】][:：]?\s*(.+)", summary)
-        if new_shots:
-            for s in new_shots:
-                if s not in title_few_shots:
-                    title_few_shots.append(s)
-            logger.info({"msg": f"收割到 {len(new_shots)} 条爆款标题样本"}, trace_id)
+        shots = _SHOT_ONLY.findall(summary)
+        for s in shots:
+            if s not in title_few_shots:
+                title_few_shots.append(s)
+        if shots:
+            logger.info({"msg": f"收割到 {len(shots)} 条爆款标题样本"}, trace_id)
 
-    # 2. 学习笔记 [LEARNING]
-    new_notes = re.findall(r"[\[【]LEARNING[\]】][:：]?\s*(.+)", summary)
-
-    # 3. 话题词 [TAG]
-    extracted_tags: list[str] = []
-    for tag_line in re.findall(r"[\[【]TAG[\]】][:：]?\s*(.+)", summary):
-        extracted_tags.extend(re.findall(r"#(\w+)", tag_line))
-
-    # 4. 焦虑点 [ANXIETY]
-    new_anxieties = re.findall(r"[\[【]ANXIETY[\]】][:：]?\s*(.+)", summary)
-
-    # 5. 知识点 [KNOWLEDGE]
-    new_knowledge = re.findall(r"[\[【]KNOWLEDGE[\]】][:：]?\s*(.+)", summary)
-
-    # 6. 心情 [MOOD]
-    mood_match = re.search(r"[\[【]MOOD[\]】][:：]?\s*(\w+)", summary)
+    # 2. 其它标签
+    new_notes = _LEARNING.findall(summary)
+    extracted_tags = [w for line in _TAG_LINE.findall(summary) for w in _HASH_WORD.findall(line)]
+    new_anxieties = _ANXIETY.findall(summary)
+    new_knowledge = _KNOWLEDGE.findall(summary)
+    mood_match = _MOOD.search(summary)
     new_mood = mood_match.group(1) if mood_match else None
 
-    # 7. 灵感 [INSIGHT] (带#话题)
     new_insights: list[str] = []
-    for insight_line in re.findall(r"[\[【]INSIGHT[\]】][:：]?\s*(.+)", summary):
-        for word in re.findall(r"#(\w+)", insight_line):
+    for line in _INSIGHT_LINE.findall(summary):
+        for word in _HASH_WORD.findall(line):
             if word not in inspiration_pool:
                 inspiration_pool.append(word)
                 new_insights.append(word)
 
-    # 收割汇总日志
     harvested = {
         k: v for k, v in {
             "LEARNING": len(new_notes),
@@ -111,7 +107,6 @@ def harvest_knowledge(summary: str, trace_id: str, state: AgentStateRepo) -> Non
     else:
         logger.info({"msg": "知识收割完成，未提取到新标签"}, trace_id)
 
-    # 8. 持久化
     state.update(
         inspiration_pool=inspiration_pool,
         last_discovery=summary,
@@ -125,26 +120,10 @@ def harvest_knowledge(summary: str, trace_id: str, state: AgentStateRepo) -> Non
     )
 
 
-def _save_note_detail(title: str, content: str) -> None:
-    try:
-        os.makedirs("data/notes", exist_ok=True)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-        filename = f"data/notes/{timestamp}.md"
-        with open(filename, "w", encoding="utf-8") as f:
-            f.write(f"# {title}\n\n## 正文内容\n\n{content}\n")
-        logger.info({"msg": "笔记详情已保存", "path": filename})
-    except Exception as e:
-        logger.error({"msg": "保存笔记详情失败", "error": str(e)})
-
-
 def get_evolution_context(state: AgentStateRepo, title_few_shots: list[str]) -> EvolutionContext:
-    """
-    计算 Agent 的进化状态与注意力权重。
-    基于 agent_state 的丰富程度决定 首页 vs 搜索 的比例。
-    """
+    """基于 state 丰富度计算 首页 vs 搜索 的注意力权重。"""
     snapshot = state.get()
     total_knowledge = len(snapshot["learning_notes"]) + len(snapshot["hashtags"]) + len(title_few_shots)
-
     home_weight = 0.10 if total_knowledge < 100 else 0.30
     return EvolutionContext(
         home_weight=home_weight,
@@ -152,3 +131,17 @@ def get_evolution_context(state: AgentStateRepo, title_few_shots: list[str]) -> 
         is_mature=total_knowledge > 30,
         total_knowledge=total_knowledge,
     )
+
+
+def _save_note_detail(title: str, content: str) -> None:
+    try:
+        os.makedirs("data/notes", exist_ok=True)
+        filename = f"data/notes/{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.md"
+        with open(filename, "w", encoding="utf-8") as f:
+            f.write(f"# {title}\n\n## 正文内容\n\n{content}\n")
+        logger.info({"msg": "笔记详情已保存", "path": filename})
+    except Exception as e:
+        logger.error({"msg": "保存笔记详情失败", "error": str(e)})
+
+
+__all__ = ["EvolutionContext", "get_evolution_context", "harvest_knowledge"]
