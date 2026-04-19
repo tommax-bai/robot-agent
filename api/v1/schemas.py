@@ -56,6 +56,11 @@ class DelegateTaskReq(BaseModel):
     timeout_seconds: int = 300
 
 
+class DelegateCancelReq(BaseModel):
+    account_id: str = "default"
+    trace_id: str
+
+
 class WorkerCreateReq(BaseModel):
     account_id: str | None = None
     image_id: str | None = None
@@ -64,6 +69,7 @@ class WorkerCreateReq(BaseModel):
 __all__ = [
     "ActionReq",
     "CallbackResultReq",
+    "DelegateCancelReq",
     "DelegateTaskReq",
     "ScreenshotReq",
     "SessionAcquireReq",

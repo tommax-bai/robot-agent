@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from agents.base import AgentError, StepBudgetExceededError, TaskResult
+from agents.base import AgentError, ControlSignal, StepBudgetExceededError, TaskResult
 from agents.operator.resolver import ResolverOutcome
 
 if TYPE_CHECKING:
@@ -42,6 +42,11 @@ class StrategyResolver:
             )
             return ResolverOutcome.resolved(result)
         except StepBudgetExceededError as e:
+            # StepBudget 也是 ControlSignal，但 RetryPolicy 语义上允许把它当失败兜底
+            # （ResumeOnBudgetPolicy 已在 _retry.run 内部按需续航），走到这里视为真失败
             return ResolverOutcome.failed(TaskResult.failure(e), reason=str(e))
+        except ControlSignal:
+            # CancelledError 等控制信号必须穿透到 RunSlot，不能被降级为任务失败
+            raise
         except AgentError as e:
             return ResolverOutcome.failed(TaskResult.failure(e), reason=str(e))

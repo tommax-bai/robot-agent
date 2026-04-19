@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from agents.base import AgentError, Task, TaskResult
+from agents.base import AgentError, ControlSignal, Task, TaskResult
 from agents.operator.stop_policy import StopOnFirstFailure
 from agents.result_aggregation import aggregate_results
 from services.history import init_history
@@ -46,6 +46,9 @@ class Operator:
         ev(Ev.PLAN_STARTED, goal=task.goal)
         try:
             plan = await self._planner.generate_plan(ctx, task.goal)
+        except ControlSignal:
+            # 取消 / 步数信号必须穿透，不能降级为 Plan 失败
+            raise
         except AgentError as e:
             ev(Ev.PLAN_FAILED, error=str(e), exc_info=True)
             return TaskResult.failure(e)

@@ -17,6 +17,7 @@ class Observation:
 
     image_base64: str
     captured_at: str  # ISO 时间字符串
+    content_type: str = "image/jpeg"  # MIME；CloudMobileEnv 可能走 image/png
 
 
 @dataclass(frozen=True)

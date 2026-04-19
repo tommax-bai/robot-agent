@@ -29,10 +29,17 @@ class Event(StrEnum):
 
 
 class EventBus:
-    """极简 in-process pub/sub。"""
+    """极简 in-process pub/sub。
+
+    线程安全：publish 可能来自任意线程（SessionManager.release、_LogHandler.emit
+    挂在 root logger），而 asyncio.Queue 本身不保证跨线程安全。所以：
+    - subscribe 时捕获当前运行的事件循环，和队列一起存起来
+    - publish 不直接 put_nowait，而是 loop.call_soon_threadsafe 到该队列所属 loop
+    - QueueFull / QueueEmpty 只在回调内部处理，避免与 loop 内部状态竞争
+    """
 
     def __init__(self):
-        self._subscribers: list[asyncio.Queue] = []
+        self._subscribers: list[tuple[asyncio.AbstractEventLoop, asyncio.Queue]] = []
         self._lock = threading.Lock()
 
     def publish(self, event: Event | str, payload: dict | None = None) -> None:
@@ -40,33 +47,40 @@ class EventBus:
         record = {"type": evt_type, "ts": time.time(), "payload": payload or {}}
         with self._lock:
             snapshot = list(self._subscribers)
-        for q in snapshot:
+        for loop, q in snapshot:
             try:
-                q.put_nowait(record)
-            except asyncio.QueueFull:
-                try:
-                    q.get_nowait()
-                    q.put_nowait(record)
-                except (asyncio.QueueEmpty, asyncio.QueueFull):
-                    pass
+                loop.call_soon_threadsafe(_deliver, q, record)
+            except RuntimeError:
+                # loop 已关闭（进程退出 / 订阅者在 shutdown 未及时 unsubscribe），静默丢弃
+                pass
 
     def subscribe(self) -> asyncio.Queue:
+        loop = asyncio.get_running_loop()
         q: asyncio.Queue = asyncio.Queue(maxsize=_PER_SUBSCRIBER_QUEUE_MAX)
         with self._lock:
-            self._subscribers.append(q)
+            self._subscribers.append((loop, q))
         return q
 
     def unsubscribe(self, q: asyncio.Queue) -> None:
         with self._lock:
-            try:
-                self._subscribers.remove(q)
-            except ValueError:
-                pass
+            self._subscribers = [(l, sq) for (l, sq) in self._subscribers if sq is not q]
 
     @property
     def subscriber_count(self) -> int:
         with self._lock:
             return len(self._subscribers)
+
+
+def _deliver(q: asyncio.Queue, record: dict) -> None:
+    """在 Queue 所属 loop 内投递。满则丢一个最旧事件给新事件让位。"""
+    try:
+        q.put_nowait(record)
+    except asyncio.QueueFull:
+        try:
+            q.get_nowait()
+            q.put_nowait(record)
+        except (asyncio.QueueEmpty, asyncio.QueueFull):
+            pass
 
 
 def payload(**kwargs: Any) -> dict:

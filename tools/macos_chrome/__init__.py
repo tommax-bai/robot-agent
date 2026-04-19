@@ -23,6 +23,8 @@ class MacOSChromeEnv:
     capture 时写入窗口尺寸，actions 时读出做坐标转换。
     """
 
+    content_type = "image/jpeg"  # capture.py 始终保存为 JPEG
+
     def __init__(self) -> None:
         self._window = Window()
 

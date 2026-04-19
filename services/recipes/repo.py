@@ -111,6 +111,9 @@ class RecipeStore:
             self._root.mkdir(parents=True, exist_ok=True)
             shutil.move(str(source), str(dest))
             promoted = replace(promoted, source_path=str(dest))
+            # 必须重写 JSON：原文件里 trial=true/enabled=false 是显式字段，
+            # _parse_recipe 会优先读显式值，重启后提升会被静默回滚。
+            self._write_back(promoted)
             logger.info(
                 {
                     "msg": "trial recipe 已提升为正式",

@@ -320,7 +320,7 @@ class LlmPageClassifier:
     def _classify_with_llm(self, observation: Observation, trace_id: str) -> PageClassification:
         known_pages = self._registry.summaries()
         prompt = _build_prompt(known_pages)
-        image_url = f"data:image/jpeg;base64,{observation.image_base64}"
+        image_url = f"data:{observation.content_type};base64,{observation.image_base64}"
         logger.info(
             {
                 "msg": "开始 LLM 页面分类",

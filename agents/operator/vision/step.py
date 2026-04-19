@@ -126,7 +126,11 @@ class VisionActionStep:
         # env.capture 对 cloud 是 HTTP 阻塞调用（~200-500ms），
         # 丢线程池避免挂死 asyncio loop。
         image_b64, _, _ = await asyncio.to_thread(self._env.capture, ctx.trace_id, True)
-        return Observation(image_base64=image_b64, captured_at=datetime.now().isoformat())
+        return Observation(
+            image_base64=image_b64,
+            captured_at=datetime.now().isoformat(),
+            content_type=getattr(self._env, "content_type", "image/jpeg"),
+        )
 
     async def _think(
         self,
@@ -144,7 +148,7 @@ class VisionActionStep:
             f"{feedback}"
             f"请根据当前image输出下一步动作 JSON。"
         )
-        image_url = f"data:image/jpeg;base64,{observation.image_base64}"
+        image_url = f"data:{observation.content_type};base64,{observation.image_base64}"
         history.add_user(
             [
                 {"type": "text", "text": user_text},

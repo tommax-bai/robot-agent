@@ -2,7 +2,9 @@
   "permissions": {
     "allow": [
       "Bash(gh pr:*)",
-      "Bash(.venv/bin/python -c \"import ast; import glob; [ast.parse\\(open\\(f, encoding='utf-8'\\).read\\(\\), f\\) for f in glob.glob\\('**/*.py', recursive=True\\) if '.venv' not in f and 'skills-bak' not in f and 'skills/' not in f] and print\\('OK'\\)\")"
+      "Bash(.venv/bin/python -c \"import ast; import glob; [ast.parse\\(open\\(f, encoding='utf-8'\\).read\\(\\), f\\) for f in glob.glob\\('**/*.py', recursive=True\\) if '.venv' not in f and 'skills-bak' not in f and 'skills/' not in f] and print\\('OK'\\)\")",
+      "WebFetch(domain:claude.ai)",
+      "Bash(curl *)"
     ]
   }
 }

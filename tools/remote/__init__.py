@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING
 
 import httpx
@@ -19,6 +20,9 @@ from agents.base import AgentError, TaskResult
 if TYPE_CHECKING:
     from agents.base import SubTask
     from runtime.ctx import RunContext
+
+# cancel 轮询间隔：cancel 信号从 ctx.cancel 到发出 HTTP 取消请求的最长延迟
+_CANCEL_POLL_INTERVAL_SECONDS = 0.2
 
 
 class RemoteEnv:
@@ -34,6 +38,8 @@ class RemoteEnv:
         self._base = session_service_url.rstrip("/")
         self._account_id = account_id
         self._mode = mode
+        # capture 每次刷新；首次 capture 前的默认值按 mode 推断
+        self.content_type = "image/jpeg"
         headers = {}
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
@@ -58,6 +64,9 @@ class RemoteEnv:
         d = resp.json()
         if not d.get("ok", False):
             raise RuntimeError(f"[{self._mode}] 远程截图失败: {d.get('error', 'unknown')}")
+        ct = d.get("content_type")
+        if ct:
+            self.content_type = ct
         return d["base64"], d.get("cursor_x", 0), d.get("cursor_y", 0)
 
     def perform(self, trace_id: str, action: dict) -> dict:
@@ -114,20 +123,58 @@ class RemoteDelegateStrategy:
                 timeout=httpx.Timeout(connect=5.0, read=float(self._timeout + 60), write=10.0, pool=5.0),
                 headers=self._headers,
             ) as client:
-                resp = await client.post(
-                    "/api/v1/session/delegate-task",
-                    json={
-                        "account_id": self._account_id,
-                        "trace_id": ctx.trace_id,
-                        "goal": subtask.goal,
-                        "max_steps": 50,
-                        "timeout_seconds": self._timeout,
-                    },
+                post_task = asyncio.create_task(
+                    client.post(
+                        "/api/v1/session/delegate-task",
+                        json={
+                            "account_id": self._account_id,
+                            "trace_id": ctx.trace_id,
+                            "goal": subtask.goal,
+                            "max_steps": 50,
+                            "timeout_seconds": self._timeout,
+                        },
+                    )
                 )
-                resp.raise_for_status()
-                d = resp.json()
+
+                async def _cancel_watcher():
+                    while not ctx.cancel.cancelled:
+                        try:
+                            await asyncio.sleep(_CANCEL_POLL_INTERVAL_SECONDS)
+                        except asyncio.CancelledError:
+                            return
+                    logger.info(
+                        {"msg": "[agentbay] 检测到 cancel，POST /session/delegate-cancel"},
+                        ctx.trace_id,
+                    )
+                    try:
+                        # shield: finally 里的 watcher.cancel() 不应打断已发出的 cancel RPC
+                        await asyncio.shield(
+                            client.post(
+                                "/api/v1/session/delegate-cancel",
+                                json={"account_id": self._account_id, "trace_id": ctx.trace_id},
+                                timeout=httpx.Timeout(connect=5.0, read=10.0, write=5.0, pool=5.0),
+                            )
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            {"msg": "[agentbay] 远程 delegate-cancel 失败", "error": str(e)},
+                            ctx.trace_id,
+                        )
+
+                watcher = asyncio.create_task(_cancel_watcher())
+                try:
+                    resp = await post_task
+                    resp.raise_for_status()
+                    d = resp.json()
+                finally:
+                    watcher.cancel()
+                    try:
+                        await watcher
+                    except asyncio.CancelledError:
+                        pass
         except Exception as e:
             logger.error({"msg": "[agentbay] 远程委托失败", "error": str(e)}, ctx.trace_id)
+            ctx.cancel.raise_if_cancelled()
             return TaskResult.failure(AgentError(f"[agentbay] 远程委托失败: {e}"))
 
         ctx.cancel.raise_if_cancelled()

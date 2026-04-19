@@ -63,6 +63,7 @@ class CloudMobileEnv:
         if fmt not in ("png", "jpeg"):
             raise RuntimeError(f"screenshot_format 必须是 png 或 jpeg，收到 {screenshot_format!r}")
         self._screenshot_format = fmt
+        self.content_type = f"image/{fmt}"
 
     # ── Environment 协议 ──────────────────────────────────────
 

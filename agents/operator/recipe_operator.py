@@ -64,7 +64,11 @@ class RecipeOperator:
         )
         from datetime import datetime
 
-        observation = Observation(image_base64=image_b64, captured_at=datetime.now().isoformat())
+        observation = Observation(
+            image_base64=image_b64,
+            captured_at=datetime.now().isoformat(),
+            content_type=getattr(self._env, "content_type", "image/jpeg"),
+        )
         page_context = self._page_cache.get_or_classify(ctx.trace_id, observation)
         recipe = self._recipes.match(subtask, page_context)
         if recipe is None:

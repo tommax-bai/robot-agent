@@ -15,6 +15,7 @@ import utils.logger as logger
 from api.v1._common import resolve_worker
 from api.v1.schemas import (
     ActionReq,
+    DelegateCancelReq,
     DelegateTaskReq,
     ScreenshotReq,
     SessionAcquireReq,
@@ -24,6 +25,11 @@ from api.v1.schemas import (
 from runtime import Host
 
 router = APIRouter()
+
+# trace_id -> {ws_handle, task_id, mobile_agent}
+# 注：本进程单实例；若未来多副本共享 session service，需要外部协调（Redis / sticky routing）
+_active_delegations: dict[str, dict] = {}
+_active_delegations_lock = asyncio.Lock()
 
 
 # ── Session 生命周期 ──────────────────────────────────────────
@@ -86,7 +92,13 @@ async def screenshot(req: ScreenshotReq):
         b64, cx, cy = await asyncio.to_thread(w.env.capture, trace, req.include_cursor)
     except Exception as e:
         return {"ok": False, "error": str(e), "base64": "", "cursor_x": 0, "cursor_y": 0}
-    return {"ok": True, "base64": b64, "cursor_x": cx, "cursor_y": cy}
+    return {
+        "ok": True,
+        "base64": b64,
+        "cursor_x": cx,
+        "cursor_y": cy,
+        "content_type": getattr(w.env, "content_type", "image/jpeg"),
+    }
 
 
 @router.post("/session/action")
@@ -129,13 +141,31 @@ async def delegate_task(req: DelegateTaskReq):
             mobile_agent.execute_task,
             req.goal, req.max_steps, None, _on_content, _on_tool_call,
         )
-        result = await asyncio.to_thread(handle.wait, req.timeout_seconds)
     except Exception as e:
-        logger.error({"msg": "delegate-task 异常", "error": str(e)}, trace)
+        logger.error({"msg": "delegate-task 启动异常", "error": str(e)}, trace)
         from tools.cloud_mobile.session import is_session_dead_error
         if is_session_dead_error(e):
             w.session_mgr.mark_dead("delegate-task", str(e), trace)
         return {"ok": False, "error": str(e), "summary": ""}
+
+    async with _active_delegations_lock:
+        _active_delegations[trace] = {
+            "ws_handle": getattr(handle, "_ws_handle", None),
+            "task_id": getattr(handle, "task_id", ""),
+            "mobile_agent": mobile_agent,
+        }
+    try:
+        try:
+            result = await asyncio.to_thread(handle.wait, req.timeout_seconds)
+        except Exception as e:
+            logger.error({"msg": "delegate-task wait 异常", "error": str(e)}, trace)
+            from tools.cloud_mobile.session import is_session_dead_error
+            if is_session_dead_error(e):
+                w.session_mgr.mark_dead("delegate-task", str(e), trace)
+            return {"ok": False, "error": str(e), "summary": ""}
+    finally:
+        async with _active_delegations_lock:
+            _active_delegations.pop(trace, None)
 
     ok = bool(getattr(result, "success", False))
     error_msg = getattr(result, "error_message", "") or ""
@@ -160,6 +190,36 @@ async def delegate_task(req: DelegateTaskReq):
         "tool_calls": len(tool_calls),
         "notes": len(notes),
     }
+
+
+@router.post("/session/delegate-cancel")
+async def delegate_cancel(req: DelegateCancelReq):
+    """取消正在进行的 delegate-task。Brain 侧 cancel 触发后调用。"""
+    async with _active_delegations_lock:
+        entry = _active_delegations.get(req.trace_id)
+    if entry is None:
+        return {"ok": False, "error": "no active delegation for trace_id", "cancelled": False}
+
+    ws_handle = entry.get("ws_handle")
+    task_id = entry.get("task_id") or ""
+    mobile_agent = entry.get("mobile_agent")
+
+    if ws_handle is not None:
+        try:
+            await asyncio.to_thread(ws_handle.cancel)
+            logger.info({"msg": "delegate-cancel via ws_handle.cancel"}, req.trace_id)
+            return {"ok": True, "cancelled": True, "via": "ws_handle"}
+        except Exception as e:
+            logger.warning({"msg": "ws_handle.cancel 异常", "error": str(e)}, req.trace_id)
+    if task_id and mobile_agent is not None:
+        try:
+            await asyncio.to_thread(mobile_agent.terminate_task, task_id)
+            logger.info({"msg": "delegate-cancel via terminate_task", "task_id": task_id}, req.trace_id)
+            return {"ok": True, "cancelled": True, "via": "terminate_task"}
+        except Exception as e:
+            logger.warning({"msg": "terminate_task 异常", "error": str(e)}, req.trace_id)
+            return {"ok": False, "error": str(e), "cancelled": False}
+    return {"ok": False, "error": "no ws_handle and no task_id", "cancelled": False}
 
 
 # ── Worker 管理（session 视角）────────────────────────────────

@@ -20,7 +20,11 @@ class Environment(Protocol):
     实现类负责把 agent 层的"看/做"请求翻译到具体设备：
     - capture(trace_id, include_cursor) -> (base64 图像, cursor_x, cursor_y)
     - perform(trace_id, action) -> {ok, message, finish, ...}
+    - content_type: 当前 capture 返回图像的 MIME（默认 image/jpeg；CloudMobileEnv
+      在 AGENTBAY_SCREENSHOT_FORMAT=png 时需要暴露 image/png 以便观察侧正确包装 data URI）
     """
+
+    content_type: str
 
     def capture(
         self, trace_id: str, include_cursor: bool = True
