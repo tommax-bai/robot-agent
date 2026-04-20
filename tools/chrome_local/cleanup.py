@@ -1,7 +1,7 @@
 """
 Chrome 环境重置：关掉所有旧 tab，留一个空白页。
 
-仅 local_chrome 模式使用。由 Supervisor 在任务切换时调用。
+仅 chromelocal 模式使用。由 Supervisor 在任务切换时调用。
 """
 
 from __future__ import annotations

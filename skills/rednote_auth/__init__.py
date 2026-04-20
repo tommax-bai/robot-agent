@@ -13,9 +13,9 @@ from skills import Pack, ToolContext, ToolOutcome
 pack = Pack(
     name="rednote.auth",
     description="小红书账户登录与状态检查模块。用于打开应用、通过视觉判断登录状态并执行登录。",
-    # 指令面向 local_chrome 与 cloudmobile 均可读；但具体工具的实现依赖不同，
+    # 指令面向 chromelocal 与 wuyingcloud 均可读；但具体工具的实现依赖不同，
     # 用 tool-level supports 精确控制暴露。
-    supports=("local_chrome", "cloudmobile"),
+    supports=("chromelocal", "wuyingcloud"),
 )
 
 _VERIFICATION_TIMEOUT_SECONDS = 180
@@ -23,7 +23,7 @@ _VERIFICATION_POLL_INTERVAL = 1
 
 
 # 硬依赖 bootstrap.chrome_client / selenium，仅本地 chrome 可用
-@pack.tool(supports=("local_chrome",))
+@pack.tool(supports=("chromelocal",))
 def open_rednote_homepage(ctx: ToolContext) -> ToolOutcome:
     """打开小红书首页。已有小红书标签页时切换，否则新开。"""
     chrome = get_chrome()

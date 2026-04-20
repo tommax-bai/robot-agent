@@ -7,7 +7,7 @@
     pack = Pack(
         name="rednote.auth",
         description="...",
-        supports=("local_chrome",),
+        supports=("chromelocal",),
     )
 
     @pack.tool
@@ -34,7 +34,7 @@ class Pack:
         name: str,
         description: str,
         *,
-        supports: tuple[str, ...] = ("local_chrome", "cloudmobile", "agentbay"),
+        supports: tuple[str, ...] = ("chromelocal", "wuyingcloud", "agentbay"),
     ):
         if not name:
             raise ValueError("Pack.name 不能为空")
@@ -56,8 +56,8 @@ class Pack:
 
         裸用:  @pack.tool                       → 函数名即工具名，继承 pack.supports
         改名:  @pack.tool(name=)                → 显式命名（少见）
-        限模式: @pack.tool(supports=("local_chrome",))  →
-            pack 整体扩到 cloudmobile，但本工具实现是 selenium-only，只在 local_chrome 暴露
+        限模式: @pack.tool(supports=("chromelocal",))  →
+            pack 整体扩到 wuyingcloud，但本工具实现是 selenium-only，只在 chromelocal 暴露
         """
         def _register(f: ToolFn) -> ToolFn:
             short = name or f.__name__

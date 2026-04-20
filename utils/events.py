@@ -40,6 +40,7 @@ class Ev(StrEnum):
     TASK_PREEMPTED = "task.preempted"
     TASK_COMPLETED = "task.completed"
     TASK_FAILED = "task.failed"
+    TASK_PERSONA = "task.persona"
 
     # Plan
     PLAN_STARTED = "plan.started"

@@ -3,7 +3,7 @@
 
 关联的当前 Chrome 窗口位置/尺寸由 `Window` 实例持有，每次 capture 时更新。
 以前是 `tools/screen.py` 里的模块级全局 dict——现在是实例字段，多 worker/多账号
-不会串。`MacOSChromeEnv` 持有一个 `Window` 实例并共享给 capture/actions。
+不会串。`ChromeLocalEnv` 持有一个 `Window` 实例并共享给 capture/actions。
 """
 
 from __future__ import annotations

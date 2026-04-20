@@ -12,6 +12,7 @@ import config
 import utils.logger as logger
 from agents.base import StrategistError, Task
 from agents.strategist import GoalContext, Persona, StateSnapshot
+from agents.supervisor.jobs.patrol import emit_persona
 from services.knowledge import get_evolution_context, harvest_knowledge
 
 if TYPE_CHECKING:
@@ -60,8 +61,10 @@ class PostJob:
 
         trace_id = f"post-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
 
+        persona = Persona.from_config()
+        emit_persona(persona, kind="post", account_id=jctx.account_id, trace_id=trace_id)
         goal_ctx = GoalContext(
-            persona=Persona.from_config(),
+            persona=persona,
             state=StateSnapshot.from_state_dict(snapshot),
             inspiration=tuple(snapshot["inspiration_pool"]),
         )

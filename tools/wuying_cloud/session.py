@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import enum
+import inspect
 import threading
 import time
 from typing import TYPE_CHECKING, Any
@@ -42,10 +43,47 @@ def is_session_dead_error(e: BaseException) -> bool:
     return any(marker in msg for marker in _SESSION_DEAD_MARKERS)
 
 
+def _supports_param(cls: type, name: str) -> bool:
+    """wuying-agentbay-sdk 0.15 起删掉了 idle_release_timeout；用 introspection 决定是否传。"""
+    try:
+        return name in inspect.signature(cls.__init__).parameters
+    except (TypeError, ValueError):
+        return False
+
+
+_IDLE_RELEASE_WARNED = False
+
+
+def _warn_idle_release_once(value: int) -> None:
+    """当前安装的 SDK 不支持 idle_release_timeout，只在进程内告警一次。"""
+    global _IDLE_RELEASE_WARNED
+    if _IDLE_RELEASE_WARNED:
+        return
+    _IDLE_RELEASE_WARNED = True
+    logger.warning({
+        "msg": "当前 wuying-agentbay-sdk 不支持 idle_release_timeout，已忽略；"
+               "仅依赖启动时孤儿清理（AGENT_AUTO_CLEANUP_ORPHANS）",
+        "requested_seconds": value,
+    })
+
+
 class SessionState(enum.Enum):
     IDLE = "idle"
     CREATING = "creating"
     ACTIVE = "active"
+
+
+def platform_from_image_id(image_id: str) -> str:
+    """根据镜像 ID 判断云端实例类型："mobile" (Android) 或 "desktop" (Windows/Linux)。
+
+    约定：带 'mobile' 关键字 → 移动端；带 'windows'/'linux'/'computer' 关键字 → 桌面；
+    其余默认 'mobile'，保留向后兼容（早期仓库只跑 Android 云手机）。"""
+    s = (image_id or "").lower()
+    if "mobile" in s:
+        return "mobile"
+    if "windows" in s or "linux" in s or s.startswith("computer"):
+        return "desktop"
+    return "mobile"
 
 
 class SessionManager:
@@ -103,6 +141,11 @@ class SessionManager:
     @property
     def mode(self) -> str:
         return self._mode
+
+    @property
+    def platform(self) -> str:
+        """从 image_id 推断：'mobile' (Android 云手机) / 'desktop' (Windows/Linux 云桌面)。"""
+        return platform_from_image_id(self._image_id)
 
     def update_screen_size(self, w: int, h: int) -> None:
         self._screen_w = w
@@ -206,10 +249,13 @@ class SessionManager:
 
         try:
             client = AgentBay(api_key=self._api_key)
-            params = CreateSessionParams(
-                image_id=self._image_id,
-                idle_release_timeout=self._idle_release_timeout,
-            )
+            kwargs: dict[str, Any] = {"image_id": self._image_id}
+            if self._idle_release_timeout is not None:
+                if _supports_param(CreateSessionParams, "idle_release_timeout"):
+                    kwargs["idle_release_timeout"] = self._idle_release_timeout
+                else:
+                    _warn_idle_release_once(self._idle_release_timeout)
+            params = CreateSessionParams(**kwargs)
             result = client.create(params)
             # SessionResult 的结构：{success, error_message, session, request_id}
             # 失败时 session=None；不能 `or result` 退化成 SessionResult 本身，
@@ -322,4 +368,5 @@ __all__ = [
     "SessionState",
     "is_session_dead_error",
     "cleanup_orphan_sessions",
+    "platform_from_image_id",
 ]

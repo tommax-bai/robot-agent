@@ -17,7 +17,7 @@ def boot() -> None:
     system.detect_platform()
 
     mode = config.settings.agent.runtime.mode
-    if mode == "local_chrome":
+    if mode == "chromelocal":
         chrome_install.ensure_installed()
         chrome_launch.prepare()
         chrome_client.start()

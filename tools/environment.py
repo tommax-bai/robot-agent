@@ -20,8 +20,8 @@ class Environment(Protocol):
     实现类负责把 agent 层的"看/做"请求翻译到具体设备：
     - capture(trace_id, include_cursor) -> (base64 图像, cursor_x, cursor_y)
     - perform(trace_id, action) -> {ok, message, finish, ...}
-    - content_type: 当前 capture 返回图像的 MIME（默认 image/jpeg；CloudMobileEnv
-      在 AGENTBAY_SCREENSHOT_FORMAT=png 时需要暴露 image/png 以便观察侧正确包装 data URI）
+    - content_type: 当前 capture 返回图像的 MIME（由 `system.screenshot.{chromelocal,
+      wuyingcloud}.format` 决定，用于 data URI 包装）
     """
 
     content_type: str
@@ -39,7 +39,7 @@ def coerce_param(params: dict, key: str, default: Any = None) -> Any:
     """LLM 输出参数 dict 的容错取值。
 
     现实里 LLM 经常产出 "X" / 'x' / \\"x\\" / " x " 等脏 key，这里统一兜底。
-    放到 environment 层是为了避免 macos_chrome / cloud_mobile 各自写一份。
+    放到 environment 层是为了避免 chrome_local / wuying_cloud 各自写一份。
     """
     if not isinstance(params, dict):
         return default

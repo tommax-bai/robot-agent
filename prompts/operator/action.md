@@ -44,7 +44,7 @@
 |------|------|------|
 | **click** | `{{"x": 整数, "y": 整数, "description": 字符串}}` | 单击目标中心 |
 | **dblclick** | `{{"x": 整数, "y": 整数, "description": 字符串}}` | 双击目标中心 |
-| **move** | `{{"x": 整数, "y": 整数, "description": 字符串}}` | 移动鼠标到目标（仅 local_chrome 有效） |
+| **move** | `{{"x": 整数, "y": 整数, "description": 字符串}}` | 移动鼠标到目标（仅 chromelocal 有效） |
 | **scroll** | `{{"clicks": 整数, "x": 整数, "y": 整数, "description": 字符串}}` | 滚轮滚动（正数上，负数下） |
 | **drag** | `{{"x1": 整数, "y1": 整数, "x2": 整数, "y2": 整数, "description": 字符串}}` | 拖拽操作 |
 | **long_press** | `{{"x": 整数, "y": 整数, "milliseconds": 整数, "description": 字符串}}` | 长按（唤起文本选择菜单 / 图标菜单；milliseconds 默认 600） |

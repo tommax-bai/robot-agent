@@ -8,12 +8,12 @@
 
 ### 2. 输入框操作（按 runtime mode 分流）
 
-#### 2.1 local_chrome（桌面浏览器）
+#### 2.1 chromelocal（桌面浏览器）
 - **粘贴前清空**（推荐一把梭）：`clear_input(x,y)` → `paste(text)`
 - **等价拆写**：`click` → `hotkey("command+a")` → `hotkey("delete")` → `paste`
 - `hotkey` 可用任意 pyautogui 键名或组合（command/ctrl/shift/alt + 其它）。
 
-#### 2.2 cloudmobile / agentbay（阿里无影云手机）
+#### 2.2 wuyingcloud / agentbay（阿里无影云手机）
 - **首选**：`click` 输入框 → `paste(text)`（Android IME 的 input_text 通常会替换当前 EditText 内容）。
 - **`paste` 必须在输入框已获焦时才能工作**：单独调 `paste` 没先 `click` 会报 "No focused editable node found" 直接失败。**保险做法**：`actions` 数组里把 `click(x,y)` 和 `paste(text)` 一次性一起返回。
 - **强制清空**：`clear_input(x,y)` —— 此动作发起 tap + 长按（650ms），**会弹出 Android 文本选择菜单**；下一拍必须视觉识别菜单然后：

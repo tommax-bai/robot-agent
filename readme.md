@@ -12,9 +12,9 @@
 
 | mode | Environment | Strategy | 适用 |
 |------|-------------|----------|------|
-| `local_chrome`（默认） | `MacOSChromeEnv`：PyAutoGUI + ImageGrab | `VisionActionStep`：自家 VLM 视觉循环 | 本地开发/调试 |
-| `cloudmobile` | `CloudMobileEnv`：阿里无影云手机 session | `VisionActionStep`：同上 | 矩阵账号生产、防风控 |
-| `agentbay` | `CloudMobileEnv` | `AgentBayDelegateStrategy`：委托给 AgentBay 内置 mobile_use Agent | 任务原型/兜底，决策黑盒 |
+| `chromelocal` | `ChromeLocalEnv`：PyAutoGUI + ImageGrab | `VisionActionStep`：自家 VLM 视觉循环 | 本地开发/调试 |
+| `wuyingcloud`（默认） | `WuyingMobileEnv` / `WuyingDesktopEnv`：阿里无影云手机/云电脑 session | `VisionActionStep`：同上 | 矩阵账号生产、防风控 |
+| `agentbay` | `WuyingMobileEnv` / `WuyingDesktopEnv` | `AgentBayDelegateStrategy`：委托给 AgentBay 内置 mobile_use Agent | 任务原型/兜底，决策黑盒 |
 
 三种模式都先尝试 `RecipeOperator` 快路径（命中即跳过 Strategy）。云端模式下 recipe 的 tap/swipe 自动走 AgentBay。
 
@@ -28,7 +28,7 @@
 | `brain` | 只跑决策层 | 需要 `SESSION_SERVICE_URL`，通过 HTTP 调远程 Session |
 | `session` | 只跑云手机 session | 需要 `AGENTBAY_API_KEY`，对外暴露 `/session/*` |
 
-拓扑拆分时 Brain 侧的 `CloudMobileEnv` 会被 `RemoteEnv` 替换，`AgentBayDelegateStrategy` 会被 `RemoteDelegateStrategy` 替换——Agent 层完全无感。
+拓扑拆分时 Brain 侧的 `WuyingMobileEnv` / `WuyingDesktopEnv` 会被 `RemoteEnv` 替换，`AgentBayDelegateStrategy` 会被 `RemoteDelegateStrategy` 替换——Agent 层完全无感。
 
 ### 切换示例
 
@@ -36,11 +36,10 @@
 # 默认本地（无需设置）
 uvicorn app:app --port 6702
 
-# 切到云手机 + 自家 VLM
-export AGENT_RUNTIME_MODE=cloudmobile
+# 切到云手机 + 自家 VLM（默认就是这个，无需 export AGENT_RUNTIME_MODE）
+export AGENT_RUNTIME_MODE=wuyingcloud
 export AGENTBAY_API_KEY=<你的阿里云 AccessKey>
-export AGENTBAY_IMAGE_ID=mobile_latest        # 可选，默认 mobile_latest
-export AGENTBAY_SCREENSHOT_FORMAT=jpeg        # 可选，jpeg|png
+export AGENTBAY_IMAGE_ID=mobile_latest        # 可选，默认 mobile_latest；云电脑用 computer-use-windows-server-2022
 uvicorn app:app --port 6702
 
 # 切到云手机 + AgentBay 内置 mobile_use Agent（委托黑盒）
@@ -55,13 +54,13 @@ uvicorn app:app --port 6702
 curl http://127.0.0.1:6702/api/v1/agent/runtime
 ```
 
-返回示例（cloudmobile 模式，session 尚未建立）：
+返回示例（wuyingcloud 模式，session 尚未建立）：
 
 ```json
 {
   "account_id": "default",
-  "mode": "cloudmobile",
-  "env": "CloudMobileEnv",
+  "mode": "wuyingcloud",
+  "env": "WuyingMobileEnv",
   "strategy": {"type": "VisionActionStep", "name": "vision_action"},
   "agentbay": {
     "image_id": "mobile_latest",
@@ -187,7 +186,7 @@ curl 'http://localhost:6702/api/v1/agent/runtime?account_id=acct-b'
 # 切换某个 worker 的 runtime.mode（per-worker，不影响其他 worker）
 curl -X POST http://localhost:6702/api/v1/agent/runtime/mode \
   -H 'Content-Type: application/json' \
-  -d '{"mode": "cloudmobile", "account_id": "acct-b"}'
+  -d '{"mode": "wuyingcloud", "account_id": "acct-b"}'
 
 # 释放某 worker 的 session（支持 force=true 先取消任务再释放）
 curl -X POST http://localhost:6702/api/v1/agent/session/release \
@@ -201,7 +200,7 @@ curl -X POST http://localhost:6702/api/v1/agent/session/release \
 
 进程异常退出（SIGKILL / OOM）会留下云端 session 继续计费。两道防线：
 
-1. **启动时自动清**：`Host.boot()` 调 `tools.cloud_mobile.cleanup_orphan_sessions()` 把上次残留的 session 全部 delete。  
+1. **启动时自动清**：`Host.boot()` 调 `tools.wuying_cloud.cleanup_orphan_sessions()` 把上次残留的 session 全部 delete。  
    关闭开关：`AGENT_AUTO_CLEANUP_ORPHANS=false`（多副本同 API key 部署时必须关）
 2. **云端 idle 回收**：CreateSession 带 `idle_release_timeout=600`，10 分钟无操作云端自动销毁。  
    调整：`AGENTBAY_IDLE_RELEASE_TIMEOUT=3600`
@@ -216,20 +215,20 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-本地模式（`local_chrome`）还需要 Chrome for Testing + ChromeDriver，[下载地址](https://googlechromelabs.github.io/chrome-for-testing/)。配置环境变量：
+本地模式（`chromelocal`）还需要 Chrome for Testing + ChromeDriver，[下载地址](https://googlechromelabs.github.io/chrome-for-testing/)。配置环境变量：
 
 ```bash
 export CHROME_BINARY=/path/to/chrome-for-testing/Google\ Chrome\ for\ Testing.app/Contents/MacOS/Google\ Chrome\ for\ Testing
 export CHROMEDRIVER_PATH=/path/to/chromedriver
 ```
 
-云端模式（`cloudmobile` / `agentbay`）只需要 `AGENTBAY_API_KEY`，不依赖 Chrome。
+云端模式（`wuyingcloud` / `agentbay`）只需要 `AGENTBAY_API_KEY`，不依赖 Chrome。
 
 ### 启动
 
 ```bash
 # 开发（热重载）
-uvicorn app:app --host 0.0.0.0 --port 6702 --reload
+uvicorn app:app --host 0.0.0.0 --port 6702 --no-access-log --reload
 
 # 生产（单 worker，无热重载）
 AGENT_HTTP_PORT=6702 gunicorn -w 1 -k uvicorn.workers.UvicornWorker app:app -b 0.0.0.0:6702 --timeout 120
@@ -263,6 +262,6 @@ curl -X POST http://127.0.0.1:6702/api/v1/agent/scheduled/patrol-once
 # 取消当前任务
 curl -X POST http://127.0.0.1:6702/api/v1/agent/cancel
 
-# Chrome DevTools 代理（local_chrome 模式）
+# Chrome DevTools 代理（chromelocal 模式）
 curl http://127.0.0.1:6702/api/v1/agent/chrome/json
 ```

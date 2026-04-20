@@ -16,10 +16,25 @@ import utils.logger as logger
 from agents.base import StrategistError, Task
 from agents.strategist import GoalContext, Persona, StateSnapshot
 from services.knowledge import get_evolution_context, harvest_knowledge
+from utils.events import Ev, ev
 
 if TYPE_CHECKING:
     from agents.strategist import GoalResult
     from agents.supervisor.jobs.base import JobContext
+
+
+def emit_persona(persona: Persona, *, kind: str, account_id: str, trace_id: str) -> None:
+    """发一条 task.persona 事件，dashboard 在启动对应 kind 任务前展示人设卡片。"""
+    ev(
+        Ev.TASK_PERSONA,
+        trace_id=trace_id,
+        account_id=account_id,
+        kind=kind,
+        name=persona.name,
+        character=persona.character,
+        style=persona.style,
+        strategy=persona.strategy,
+    )
 
 
 class PatrolJob:
@@ -36,8 +51,10 @@ class PatrolJob:
     async def build_goal(self, jctx: JobContext, trace_id: str) -> GoalResult:
         """从 state + strategist 合成本轮巡逻目标。失败抛 StrategistError。"""
         snapshot = jctx.state.get()
+        persona = Persona.from_config()
+        emit_persona(persona, kind="patrol", account_id=jctx.account_id, trace_id=trace_id)
         goal_ctx = GoalContext(
-            persona=Persona.from_config(),
+            persona=persona,
             state=StateSnapshot.from_state_dict(snapshot),
             inspiration=tuple(snapshot["inspiration_pool"]),
             evolution=get_evolution_context(jctx.state, snapshot["title_few_shots"]),

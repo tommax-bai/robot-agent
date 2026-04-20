@@ -28,7 +28,7 @@ from agents.supervisor.run_context_factory import RunContextFactory
 from agents.supervisor.run_slot import RunHandle, RunSlot
 from agents.supervisor.scheduler import Scheduler
 from agents.supervisor.status import StatusSnapshot
-from tools.macos_chrome import cleanup_chrome_environment
+from tools.chrome_local import cleanup_chrome_environment
 
 if TYPE_CHECKING:
     from agents.operator.operator import Operator

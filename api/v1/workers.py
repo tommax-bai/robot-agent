@@ -147,12 +147,12 @@ async def live_url(account_id: str | None = None):
 
 @router.get("/agent/screen.jpg")
 async def screen(account_id: str | None = None):
-    """指定 worker 的本地 Chrome 截图（仅 local_chrome 模式）。"""
+    """指定 worker 的本地 Chrome 截图（仅 chromelocal 模式）。"""
     worker = resolve_worker(account_id)
-    if worker.mode != "local_chrome":
+    if worker.mode != "chromelocal":
         raise HTTPException(
             status_code=404,
-            detail=f"screen.jpg 仅在 local_chrome 模式可用（当前 {worker.mode}），云端请用 live_view_url",
+            detail=f"screen.jpg 仅在 chromelocal 模式可用（当前 {worker.mode}），云端请用 live_view_url",
         )
     try:
         b64, _, _ = worker.env.capture("dashboard", include_cursor=True)

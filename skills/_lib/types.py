@@ -52,7 +52,7 @@ class ToolSpec:
     description: str
     fn: Callable[..., ToolOutcome]
     # None = 继承 pack.supports；给定 = 精确限制本工具可用的 runtime 模式
-    # 用法：pack 整体可用于 cloudmobile，但其中某个 selenium-only 工具 supports=("local_chrome",)
+    # 用法：pack 整体可用于 wuyingcloud，但其中某个 selenium-only 工具 supports=("chromelocal",)
     supports: tuple[str, ...] | None = None
 
     @property

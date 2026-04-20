@@ -20,7 +20,7 @@ def resolve_worker(account_id: str | None = None):
 
 def worker_runtime_payload(worker) -> dict:
     """聚合一个 worker 的 runtime 视图（mode / env / strategy / session）。"""
-    from tools.cloud_mobile.session import SessionState
+    from tools.wuying_cloud.session import SessionState
 
     payload: dict = {
         "account_id": worker.account_id,
@@ -37,6 +37,7 @@ def worker_runtime_payload(worker) -> dict:
         sw, sh = sm.screen_size
         payload["agentbay"] = {
             "image_id": sm.image_id,
+            "platform": sm.platform,  # "mobile" | "desktop"
             "session_state": sm.state.value,
             "session_active": sm.state == SessionState.ACTIVE,
             "session_id": sm.session_id,

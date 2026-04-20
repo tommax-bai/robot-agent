@@ -73,7 +73,7 @@ class SkillRegistry:
     def prompt_section(self, pack_names: Iterable[str], mode: str | None = None) -> str:
         """拼装挂载技能的 prompt 段落。
 
-        - `mode`：当前 runtime mode（local_chrome / cloudmobile / agentbay）。给出后：
+        - `mode`：当前 runtime mode（chromelocal / wuyingcloud / agentbay）。给出后：
           · pack 整体 `supports` 不含该 mode → 整个 pack 段落隐藏；
           · pack 支持该 mode，但其中某个工具自声明了更严格的 `supports` 不含该 mode →
             仅该工具从"可用工具"列表中剔除（instructions 仍然暴露；适合 pack 是

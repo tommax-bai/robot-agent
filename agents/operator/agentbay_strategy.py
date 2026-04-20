@@ -14,12 +14,12 @@ from typing import TYPE_CHECKING
 
 import utils.logger as logger
 from agents.base import AgentError, TaskResult
-from tools.cloud_mobile.session import is_session_dead_error
+from tools.wuying_cloud.session import is_session_dead_error
 
 if TYPE_CHECKING:
     from agents.base import SubTask
     from runtime.ctx import RunContext
-    from tools.cloud_mobile.session import SessionManager
+    from tools.wuying_cloud.session import SessionManager
 
 _DEFAULT_TASK_TIMEOUT_SECONDS = 300
 # mobile_use Agent 单次委托的最大步数。超过此值云端会主动停止（防死循环 / 成本兜底）。

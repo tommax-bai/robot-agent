@@ -25,11 +25,11 @@
 
 | mode | Environment（在哪执行） | Strategy（怎么决策） |
 |------|------------------------|----------------------|
-| `local_chrome`（默认） | `MacOSChromeEnv`：PyAutoGUI + ImageGrab | `VisionActionStep`：自家 VLM |
-| `cloudmobile` | `CloudMobileEnv`：阿里无影云手机 | `VisionActionStep`：自家 VLM |
-| `agentbay` | `CloudMobileEnv`（共享 session） | `AgentBayDelegateStrategy`：委托给 AgentBay 内置 mobile_use Agent（黑盒） |
+| `chromelocal` | `ChromeLocalEnv`：PyAutoGUI + ImageGrab | `VisionActionStep`：自家 VLM |
+| `wuyingcloud`（默认） | `WuyingMobileEnv` / `WuyingDesktopEnv`：阿里无影云手机/云电脑 | `VisionActionStep`：自家 VLM |
+| `agentbay` | `WuyingMobileEnv` / `WuyingDesktopEnv`（共享 session） | `AgentBayDelegateStrategy`：委托给 AgentBay 内置 mobile_use Agent（黑盒） |
 
-当配置了 `SESSION_SERVICE_URL` 时，`CloudMobileEnv` 会被 `RemoteEnv` 替换，`AgentBayDelegateStrategy` 会被 `RemoteDelegateStrategy` 替换——Agent 层完全无感。
+当配置了 `SESSION_SERVICE_URL` 时，`WuyingMobileEnv` / `WuyingDesktopEnv` 会被 `RemoteEnv` 替换，`AgentBayDelegateStrategy` 会被 `RemoteDelegateStrategy` 替换——Agent 层完全无感。
 
 ### 2.2 进程拓扑（`AGENT_TOPOLOGY`，每个进程决定）
 
@@ -73,7 +73,7 @@ config/       pydantic 配置（sections + topology + env 读取）
 runtime/      Host / Worker / RunContext / EventBus / signals / wire
 services/     state / intents / recipes / vision / knowledge / history / token_usage / …
 skills/       Python 包形式的领域技能（rednote_auth / rednote_explorer / rednote_publish）
-tools/        environment（协议 + macos_chrome/cloud_mobile/remote 实现）+ llm（门面）
+tools/        environment（协议 + chrome_local/wuying_cloud/remote 实现）+ llm（门面）
 utils/        日志、JSON、fs、http、prompt、events、banner 等基础设施
 prompts/      Planner / Operator / Strategist / 页面分类 / 行为总结的 prompt
 data/         运行期数据（agent_state / action_traces / action_recipes / page_registry / intent_registry.json）
@@ -159,7 +159,7 @@ AGENT_TOPOLOGY=brain SESSION_SERVICE_URL=http://session-host:6710 \
 纯函数：
 
 - `build_session(mode, account_cfg, events, account_id)` — 云端模式建 `SessionManager`，本地/remote 返回 None。
-- `build_env(mode, account_cfg, session_mgr)` — 按 mode + `session_service_url` 返回 `MacOSChromeEnv` / `CloudMobileEnv` / `RemoteEnv`。
+- `build_env(mode, account_cfg, session_mgr)` — 按 mode + `session_service_url` 返回 `ChromeLocalEnv` / `WuyingMobileEnv` / `WuyingDesktopEnv` / `RemoteEnv`。
 - `build_strategy(mode, vision_step, session_mgr, account_cfg)` — 按 mode + remote 决定 `VisionActionStep` / `AgentBayDelegateStrategy` / `RemoteDelegateStrategy`。
 - `state_file_for(account_cfg)` — 决定 state 文件路径。
 
@@ -242,8 +242,9 @@ class Environment(Protocol):
 
 | Environment | 文件 | 适用 |
 |-------------|------|------|
-| `MacOSChromeEnv` | `tools/macos_chrome/__init__.py` | local_chrome |
-| `CloudMobileEnv` | `tools/cloud_mobile/__init__.py` | cloudmobile / agentbay（本地 session） |
+| `ChromeLocalEnv` | `tools/chrome_local/__init__.py` | chromelocal |
+| `WuyingMobileEnv` | `tools/wuying_cloud/__init__.py` | wuyingcloud / agentbay（云手机 session） |
+| `WuyingDesktopEnv` | `tools/wuying_cloud/desktop.py` | wuyingcloud / agentbay（云电脑 session） |
 | `RemoteEnv` | `tools/remote/__init__.py` | brain 拓扑，通过 HTTP 调 Session Service |
 
 消费方（`ActionDispatcher` / `VisionActionStep` / `RecipeOperator`）只接 Protocol，不 import 具体实现。
@@ -254,8 +255,8 @@ class Environment(Protocol):
 
 ### 7.2 新增原子动作的修改面
 
-- **只用于本地**：改 `tools/macos_chrome/actions.py` + `prompts/operator/action.md`。
-- **跨模式**：上面两处 + `tools/cloud_mobile/__init__.py` 的 `_ACTION_HANDLERS` 映射。云手机无意义的动作（如 `move` 光标）放进 `_NOOP_ACTIONS` 返回 `ok=True` 不打断 LLM。
+- **只用于本地**：改 `tools/chrome_local/actions.py` + `prompts/operator/action.md`。
+- **跨模式**：上面两处 + `tools/wuying_cloud/__init__.py`（必要时还有 `desktop.py`）的 `_ACTION_HANDLERS` 映射。云手机无意义的动作（如 `move` 光标）放进 `_NOOP_ACTIONS` 返回 `ok=True` 不打断 LLM。
 - **新增第四种执行环境**（桌面云电脑等）：在 `tools/` 下建包 → 实现 `Environment` Protocol → 在 `runtime/wire.py::build_env` 加分支。
 
 ## 8. Action 分发
@@ -289,7 +290,7 @@ from skills import Pack, ToolContext, ToolOutcome
 pack = Pack(
     name="rednote.auth",
     description="小红书账户登录与状态检查。",
-    supports=("local_chrome",),
+    supports=("chromelocal",),
 )
 
 @pack.tool
@@ -408,7 +409,7 @@ daily_stats
 ```python
 accounts = [
     {"id": "acct-a", "display_name": "导航员-A"},
-    {"id": "acct-b", "display_name": "导航员-B", "mode": "cloudmobile"},
+    {"id": "acct-b", "display_name": "导航员-B", "mode": "wuyingcloud"},
 ]
 ```
 
@@ -444,7 +445,7 @@ POST /api/v1/agent/mode/debug | /agent/mode/waiting | /agent/patrol
 POST /api/v1/agent/scheduled/patrol-once
 POST /api/v1/agent/session/release {account_id?, force?}
 GET  /api/v1/agent/live-url     {account_id?}
-GET  /api/v1/agent/screen.jpg   (local_chrome)
+GET  /api/v1/agent/screen.jpg   (chromelocal)
 GET  /api/v1/usage/daily_stats | /usage/details | /usage/list_dates
 GET  /api/v1/events             (SSE)
 ```
@@ -527,8 +528,8 @@ result = await runner.run(subtask, ctx)
 |------|------|
 | 新增 LLM 行为规则 | `prompts/operator/*.md` 或 `skills/<pack>/instructions.md` |
 | 新增 skill tool | `skills/<pack>/__init__.py` 加 `@pack.tool` |
-| 新增本地原子动作 | `tools/macos_chrome/actions.py` + `prompts/operator/action.md` |
-| 新增跨模式原子动作 | 上面 + `tools/cloud_mobile/__init__.py::_ACTION_HANDLERS` |
+| 新增本地原子动作 | `tools/chrome_local/actions.py` + `prompts/operator/action.md` |
+| 新增跨模式原子动作 | 上面 + `tools/wuying_cloud/__init__.py::_ACTION_HANDLERS`（必要时还有 `desktop.py`） |
 | 切换执行模式 | 设置 `AGENT_RUNTIME_MODE`（+ `AGENTBAY_API_KEY` 云端），`curl /agent/runtime` 验证 |
 | 新增第四种 Environment | `tools/xxx/` 实现 Protocol → `runtime/wire.py::build_env` 加分支 |
 | 新增定时任务 | 实现 `ScheduledJob` → `Supervisor.__init__` 里 `registry.register(...)` |

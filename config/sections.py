@@ -24,10 +24,66 @@ class ScreenSize(BaseModel):
     scale: float = 1.0
 
 
+class ScreenshotProfileCfg(BaseModel):
+    """给 LLM 的截图后处理参数。两档：chromelocal（激进省 token）/ wuyingcloud（保守保字形）。
+
+    处理管线顺序（按需开启）：
+      调色板量化(palette_colors) → 饱和度调整(saturation) → posterize → JPEG/PNG 编码
+
+    字段语义：
+      - format: 输出格式，jpeg 省流，png 无损
+      - quality: 仅 JPEG 有效（1-100）
+      - palette_colors: None=关，2-256=量化到 N 色再转回 RGB（桌面可开，移动端别开）
+      - posterize_bits: None=关，1-8=每通道保留位数（5 即 32 级）
+      - saturation: 1.0=原色，<1.0 降饱和（进一步省 JPEG 体积）
+    """
+    model_config = _model_config
+    format: str = "jpeg"
+    quality: int = 75
+    palette_colors: int | None = 128
+    posterize_bits: int | None = 5
+    saturation: float = 1.0
+
+
 class ScreenshotCfg(BaseModel):
     model_config = _model_config
     persist: bool = True
     save_dir: str = "data"
+    chromelocal: ScreenshotProfileCfg = Field(
+        default_factory=lambda: ScreenshotProfileCfg(
+            format="jpeg",
+            quality=75,
+            palette_colors=128,
+            posterize_bits=5,
+            saturation=0.7,
+        )
+    )
+    wuyingcloud: ScreenshotProfileCfg = Field(
+        default_factory=lambda: ScreenshotProfileCfg(
+            format="jpeg",
+            quality=85,
+            palette_colors=None,
+            posterize_bits=None,
+            saturation=1.0,
+        )
+    )
+
+
+class InputHumanizeCfg(BaseModel):
+    """wuyingcloud 端的拟人化输入参数。默认全关 → 等价旧行为；按需开启。
+
+    字段语义：
+      - paste_per_char: True=逐字符 input_text + 随机停顿；False=一次性 input_text
+      - paste_min_delay_ms / paste_max_delay_ms: 单字符之间的均匀抖动区间（毫秒）
+      - tap_jitter_px: tap 坐标 ±N 像素抖动；0=关
+      - pre_action_pause: 每个动作前后插入随机停顿（与 chromelocal 对齐）
+    """
+    model_config = _model_config
+    paste_per_char: bool = False
+    paste_min_delay_ms: int = 60
+    paste_max_delay_ms: int = 180
+    tap_jitter_px: int = 0
+    pre_action_pause: bool = False
 
 
 class ChromeCfg(BaseModel):
@@ -48,6 +104,7 @@ class SystemCfg(BaseModel):
     screen_size: ScreenSize = Field(default_factory=ScreenSize)
     system_info: str | None = None
     screenshot: ScreenshotCfg = Field(default_factory=ScreenshotCfg)
+    input: InputHumanizeCfg = Field(default_factory=InputHumanizeCfg)
     chrome: ChromeCfg
 
 
@@ -140,13 +197,12 @@ class AgentBayCfg(BaseModel):
     model_config = _model_config
     api_key: str = ""
     image_id: str = "mobile_latest"
-    screenshot_format: str = "jpeg"
     idle_release_timeout: int | None = 600
 
 
 class RuntimeCfg(BaseModel):
     model_config = _model_config
-    mode: str = "local_chrome"
+    mode: str = "wuyingcloud"
     agentbay: AgentBayCfg = Field(default_factory=AgentBayCfg)
     auto_cleanup_orphans_on_startup: bool = True
     session_service_url: str = ""
@@ -159,7 +215,6 @@ class AccountCfg(BaseModel):
     id: str
     display_name: str = ""
     image_id: str | None = None
-    screenshot_format: str | None = None
     state_file: str | None = None
     mode: str | None = None
     description: str = ""

@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING
 
 from runtime.events import Event, EventBus, payload
 from runtime.wire import build_env, build_session, build_strategy, close_env
-from tools.cloud_mobile import SessionManager
+from tools.wuying_cloud import SessionManager
 from tools.environment import Environment
 
 if TYPE_CHECKING:
@@ -159,7 +159,7 @@ class Worker:
         if self.minimal:
             raise RuntimeError("minimal worker 不支持 swap_runtime_mode")
 
-        valid = {"local_chrome", "cloudmobile", "agentbay"}
+        valid = {"chromelocal", "wuyingcloud", "agentbay"}
         if new_mode not in valid:
             raise ValueError(f"未知 mode={new_mode}，可选: {sorted(valid)}")
 

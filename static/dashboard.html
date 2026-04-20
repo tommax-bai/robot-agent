@@ -40,6 +40,9 @@
     grid-template-areas: "topbar topbar topbar" "rail transcript live";
     height: 100vh;
   }
+  /* 云桌面（Windows/Linux 镜像）横屏 16:9，380px 太窄会把远程桌面切掉；活跃 worker
+     为桌面时把 live 列拉宽到 ~42vw，保证完整画面能看到。 */
+  .app.live-desktop { grid-template-columns: 240px 1fr minmax(560px, 42vw); }
   .topbar {
     grid-area: topbar; display: flex; align-items: center; gap: 14px;
     padding: 0 16px; border-bottom: 1px solid var(--border); background: var(--bg);
@@ -160,6 +163,12 @@
   .bubble.finish .icon    { background: rgba(16,185,129,.18); color: #34d399; }
   .bubble.error .icon     { background: rgba(239,68,68,.18); color: #f87171; }
   .bubble.error .body     { border-color: rgba(239,68,68,.35); }
+  .bubble.persona .icon   { background: rgba(251,191,36,.18); color: #fbbf24; }
+  .bubble.persona .body   { border-color: rgba(251,191,36,.28); background: rgba(251,191,36,.04); }
+  .persona-card { margin-top: 6px; display: flex; flex-direction: column; gap: 6px; }
+  .persona-row { display: flex; gap: 10px; font-size: 12.5px; line-height: 1.55; }
+  .persona-row .persona-label { flex: none; width: 72px; color: var(--muted); font-weight: 500; }
+  .persona-row .persona-value { flex: 1; color: var(--text); white-space: pre-wrap; word-break: break-word; }
   .bubble .thought { color: var(--muted); font-style: italic; }
   .bubble .actions { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
   .bubble .chip { background: var(--surface-elev); color: var(--text); font-family: var(--mono); font-size: 11px; padding: 2px 8px; border-radius: 4px; }
@@ -213,8 +222,8 @@
     padding: 1px 5px; border-radius: 3px;
     background: var(--surface-elev); color: var(--accent);
   }
-  .compose-target .compose-target-mode.local_chrome { color: #fbbf24; }
-  .compose-target .compose-target-mode.cloudmobile  { color: #8b8ef0; }
+  .compose-target .compose-target-mode.chromelocal { color: #fbbf24; }
+  .compose-target .compose-target-mode.wuyingcloud { color: #8b8ef0; }
   .compose-target .compose-target-mode.agentbay     { color: #34d399; }
   .compose-result { color: var(--muted); font-size: 11px; margin-top: 4px; min-height: 14px; }
 
@@ -316,13 +325,13 @@
 </style>
 </head>
 <body>
-<div class="app">
+<div class="app" id="app">
   <div class="topbar">
     <span class="brand">agent<span class="dot">.</span></span>
     <span class="ctx" id="ctx">
       <span id="ctx-worker">—</span>
       <span class="sep">/</span>
-      <span id="ctx-runtime" class="pill waiting" onclick="openCmd('runtime')" title="点击切换 runtime（local_chrome / cloudmobile / agentbay）" style="cursor:pointer">—</span>
+      <span id="ctx-runtime" class="pill waiting" onclick="openCmd('runtime')" title="点击切换 runtime（chromelocal / wuyingcloud / agentbay）" style="cursor:pointer">—</span>
       <span id="ctx-mode" class="pill waiting" onclick="openCmd('supervisor')" title="点击切换 supervisor mode（debug / waiting / patrol）" style="cursor:pointer"><span class="dotm"></span>—</span>
       <span class="sep" id="ctx-step-sep" style="display:none">/</span>
       <span id="ctx-step" style="display:none"></span>
@@ -441,7 +450,7 @@ const state = {
   // 视频流继续挂着，切回即刻可见。超出容量按 lastActive 淘汰最老的。
   liveCache: new Map(),  // accountId -> {iframe, url, urlSetAt, lastActive}
   liveActive: null,      // 'iframe' | 'img' | 'placeholder' | null
-  liveImg: null,         // 当前 local_chrome 的 <img> 节点
+  liveImg: null,         // 当前 chromelocal 的 <img> 节点
   imgTimer: null,
   fastPollTimer: null,
   rtSelectInitialized: false,
@@ -549,6 +558,27 @@ function onLogEvent(payload, ts) {
   }
   if (ev === 'task.preempted') {
     pushBubble(accountId, { kind: 'note', ts, title: '任务被抢占', detail: payload.reason || '' });
+    return;
+  }
+  if (ev === 'task.persona') {
+    // 人设驱动的任务（patrol / post）：展示当前生效的人设内容，帮助看出"这轮是谁在说话"。
+    pushBubble(accountId, {
+      kind: 'persona', ts,
+      title: `人设 · ${payload.name || '—'}`,
+      detail: payload.character || '',
+      extras: {
+        kind: payload.kind,
+        style: payload.style,
+        strategy: payload.strategy,
+      },
+      persona: {
+        name: payload.name || '',
+        character: payload.character || '',
+        style: payload.style || '',
+        strategy: payload.strategy || '',
+        kind: payload.kind || '',
+      },
+    });
     return;
   }
   if (ev === 'plan.generated') {
@@ -746,7 +776,7 @@ function renderTranscript() {
   });
 }
 
-const ICONS = { task:'◎', plan:'≡', subtask:'›', step:'·', recipe:'◆', finish:'✓', error:'✕', note:'i' };
+const ICONS = { task:'◎', plan:'≡', subtask:'›', step:'·', recipe:'◆', finish:'✓', error:'✕', note:'i', persona:'♜' };
 
 function renderBubble(b) {
   const el = document.createElement('div');
@@ -773,6 +803,18 @@ function renderBubble(b) {
     if (b.skill) chips.push(`<span class="chip">skill=${escapeHtml(b.skill)}</span>`);
     if (chips.length) bits.push(`<div class="actions">${chips.join('')}</div>`);
     content = bits.join('');
+  } else if (b.kind === 'persona' && b.persona) {
+    const p = b.persona;
+    const row = (label, value) => value
+      ? `<div class="persona-row"><span class="persona-label">${label}</span><span class="persona-value">${escapeHtml(value)}</span></div>`
+      : '';
+    content =
+      `<div class="persona-card">` +
+        row('性格', p.character) +
+        row('文案风格', p.style) +
+        row('人设策略', p.strategy) +
+        (p.kind ? `<div class="actions"><span class="chip">kind=${escapeHtml(p.kind)}</span></div>` : '') +
+      `</div>`;
   } else {
     if (b.detail) content = `<div class="content">${escapeHtml(b.detail)}</div>`;
   }
@@ -794,6 +836,7 @@ function renderLive() {
   const status = document.getElementById('live-status');
   const foot = document.getElementById('live-foot-info');
   const rt = state.runtime;
+  _applyLiveLayout(rt);
 
   if (!rt) {
     _hideAllCachedIframes();
@@ -808,7 +851,7 @@ function renderLive() {
   const isPending = state.pendingWorkers.has(accountId);
   status.textContent = rt.mode;
 
-  if (rt.mode === 'local_chrome') {
+  if (rt.mode === 'chromelocal') {
     _hideAllCachedIframes();
     _removePlaceholder(body);
     _mountImg(body, accountId);
@@ -865,6 +908,14 @@ function renderLive() {
   state.liveActive = 'iframe';
   const sz = rt.agentbay && rt.agentbay.screen_size || {};
   foot.textContent = `${rt.mode} · ${sz.width || '?'}×${sz.height || '?'} · LRU ${state.liveCache.size}/${LIVE_CACHE_MAX}`;
+}
+
+function _applyLiveLayout(rt) {
+  // 云桌面 (Windows/Linux) 横屏 16:9，加宽 live 列防止切画面；其他情况恢复默认窄列。
+  const app = document.getElementById('app');
+  if (!app) return;
+  const isDesktop = !!(rt && rt.agentbay && rt.agentbay.platform === 'desktop');
+  app.classList.toggle('live-desktop', isDesktop);
 }
 
 function _showOnly(iframe) {
@@ -1145,8 +1196,8 @@ function getCommands() {
     { name: 'Patrol · 关闭', icon: '▪', run: () => setPatrol(false) },
     { name: 'Supervisor · debug', icon: '!', run: () => setMode('debug') },
     { name: 'Supervisor · waiting', icon: '…', run: () => setMode('waiting') },
-    { name: 'Runtime → local_chrome', icon: '↻', run: () => swapRuntime('local_chrome') },
-    { name: 'Runtime → cloudmobile', icon: '↻', run: () => swapRuntime('cloudmobile') },
+    { name: 'Runtime → chromelocal', icon: '↻', run: () => swapRuntime('chromelocal') },
+    { name: 'Runtime → wuyingcloud', icon: '↻', run: () => swapRuntime('wuyingcloud') },
     { name: 'Runtime → agentbay', icon: '↻', run: () => swapRuntime('agentbay') },
     { name: '释放当前 session', icon: '⏻', run: releaseSession },
     { name: '新增 worker', icon: '+', run: openAddWorkerModal },

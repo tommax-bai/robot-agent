@@ -5,9 +5,10 @@ tools/ 层：Agent 与外部世界交互的两类门面。
 - llm.LlmTool              — LLM 调用门面
 
 三个内置 Environment 实现：
-- tools.macos_chrome.MacOSChromeEnv  — 本地 macOS Chrome（PyAutoGUI）
-- tools.cloud_mobile.CloudMobileEnv  — 阿里无影云手机（AgentBay SDK）
-- tools.remote.RemoteEnv             — 通过 HTTP 代理到 Session Service
+- tools.chrome_local.ChromeLocalEnv   — 本地 macOS Chrome（PyAutoGUI）
+- tools.wuying_cloud.WuyingMobileEnv  — 阿里无影云手机（AgentBay SDK，Android 镜像）
+- tools.wuying_cloud.WuyingDesktopEnv — 阿里无影云桌面（AgentBay SDK，Windows/Linux 镜像）
+- tools.remote.RemoteEnv              — 通过 HTTP 代理到 Session Service
 
 一个 Strategy 实现（不是 env）：
 - tools.remote.RemoteDelegateStrategy — agentbay 模式下的远程委托

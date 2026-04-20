@@ -53,7 +53,7 @@ class VisionActionStep:
         env: Environment,
         recorder: TraceRecorder | None = None,
         page_cache: PageContextCache | None = None,
-        mode: str = "local_chrome",
+        mode: str = "chromelocal",
     ):
         self._cfg = cfg
         self._prompt_builder = prompt_builder
@@ -191,7 +191,7 @@ def build_default_vision_action_step(
     skills: SkillRegistry,
     recorder: TraceRecorder | None = None,
     page_cache: PageContextCache | None = None,
-    mode: str = "local_chrome",
+    mode: str = "chromelocal",
     cfg: VisionConfig | None = None,
     prompt_builder: VisionPromptBuilder | None = None,
 ) -> VisionActionStep:

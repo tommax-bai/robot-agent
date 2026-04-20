@@ -40,8 +40,8 @@
 - **填写标题**：`execute_sequence` → `click` 标题输入框 → `paste` 标题。
 - **填写正文**：`execute_sequence` → `click` 正文输入框 → `paste` 正文。
 - **添加话题词**：对于每个话题词（如 "职场"），循环执行：
-  - **local_chrome**：`execute_sequence` → `click` 正文末尾 → `paste("#职场")` → `wait` 1000ms → `hotkey("enter")` → `paste(" ")`
-  - **cloudmobile / agentbay**：`execute_sequence` → `click` 正文末尾 → `paste("#职场 ")`（带末尾空格分隔即可；Android 的 `hotkey("enter")` 不支持，若必须换行用视觉点屏幕键盘的 Enter 键）。
+  - **chromelocal**：`execute_sequence` → `click` 正文末尾 → `paste("#职场")` → `wait` 1000ms → `hotkey("enter")` → `paste(" ")`
+  - **wuyingcloud / agentbay**：`execute_sequence` → `click` 正文末尾 → `paste("#职场 ")`（带末尾空格分隔即可；Android 的 `hotkey("enter")` 不支持，若必须换行用视觉点屏幕键盘的 Enter 键）。
   - **注意**：本仓库没有 `type` 原子动作，一律用 `paste`。
 - **视觉闭环校验**：填完后必须观察截图，确认输入框内是填写的文字而非占位符。
 - **严禁**在此步骤直接点击发布按钮或暂存离开。

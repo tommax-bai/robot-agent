@@ -24,7 +24,9 @@
       "Bash(python3 -c \"import ast; ast.parse\\(open\\('utils/logger.py'\\).read\\(\\)\\); print\\('OK'\\)\")",
       "Bash(python3 -c \"import ast; ast.parse\\(open\\('tools/cloud_mobile/__init__.py'\\).read\\(\\)\\); print\\('OK'\\)\")",
       "Bash(node -e ' *)",
-      "Bash(python3 -c \"import ast; ast.parse\\(open\\('tools/cloud_mobile/session.py'\\).read\\(\\)\\); print\\('OK'\\)\")"
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\('tools/cloud_mobile/session.py'\\).read\\(\\)\\); print\\('OK'\\)\")",
+      "Bash(git mv *)",
+      "Bash(APP_ENV=dev .venv/Scripts/python.exe -c \"import config; config.validate\\(\\); from runtime import Host; Host.boot\\(config.topology\\); print\\('BOOT OK'\\); rt=config.settings.agent.runtime; print\\('mode=', rt.mode\\)\")"
     ]
   }
 }

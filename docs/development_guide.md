@@ -255,20 +255,20 @@ GUI 动作分四层（自上而下）：
 1. `VisionActionStep`（`agents/operator/vision/step.py`）：截图、调用 LLM、得到 `Decision`。可被 `AgentBayDelegateStrategy` / `RemoteDelegateStrategy` 替换为黑盒委托。
 2. `ActionDispatcher`：决定动作发给 skill tool 还是原子 action。
 3. `Environment` Protocol（`tools/environment.py`）：抽象的 `capture` / `perform` 入口，决定动作落在哪个环境。
-4. Environment 实现：`MacOSChromeEnv`（PyAutoGUI / ImageGrab）、`CloudMobileEnv`（阿里无影云手机 session）、`RemoteEnv`（HTTP 代理到 Session Service）。
+4. Environment 实现：`ChromeLocalEnv`（PyAutoGUI / ImageGrab）、`WuyingMobileEnv` / `WuyingDesktopEnv`（阿里无影云手机 / 云电脑 session）、`RemoteEnv`（HTTP 代理到 Session Service）。
 
-`ActionDispatcher` / `VisionActionStep` / `RecipeOperator` 都通过构造函数注入 `Environment`，**不要**在业务代码里直接 `import tools.macos_chrome` 或 `import tools.cloud_mobile`。
+`ActionDispatcher` / `VisionActionStep` / `RecipeOperator` 都通过构造函数注入 `Environment`，**不要**在业务代码里直接 `import tools.chrome_local` 或 `import tools.wuying_cloud`。
 
 新增原子动作时：
 
-1. 在 `tools/macos_chrome/actions.py::dispatch()` 增加 method 分支（macOS 实现）。
-2. 在 `tools/cloud_mobile/__init__.py::CloudMobileEnv._ACTION_HANDLERS` 注册同名分支，或加入 `_NOOP_ACTIONS`（在云手机上无等价物，如 `move` 光标）。
+1. 在 `tools/chrome_local/actions.py::dispatch()` 增加 method 分支（macOS 实现）。
+2. 在 `tools/wuying_cloud/__init__.py::WuyingMobileEnv._ACTION_HANDLERS`（必要时还有 `desktop.py::WuyingDesktopEnv`）注册同名分支，或加入 `_NOOP_ACTIONS`（在云手机上无等价物，如 `move` 光标）。
 3. 参数用 `tools.environment.coerce_param(params, key, default)` 做 LLM 脏键名兼容（所有 env 共用同一份实现）。
 4. 返回统一结构：`{"ok": bool, "message": str, "finish": bool}`。
 5. 不要让 action 直接读写 Agent 状态。
 6. 在 `prompts/operator/action.md` 里告诉 LLM 这个动作的存在与参数。
 
-只用于本地（例如依赖 macOS 系统快捷键）的动作可以只实现 macOS 端，但要在 prompt 里说明该动作仅在 `local_chrome` 模式可用，或在 `CloudMobileEnv` 端明确返回 `ok=False`。
+只用于本地（例如依赖 macOS 系统快捷键）的动作可以只实现 macOS 端，但要在 prompt 里说明该动作仅在 `chromelocal` 模式可用，或在 `WuyingMobileEnv` 端明确返回 `ok=False`。
 
 ## 14. 可重复动作 Recipe 规范
 

@@ -143,7 +143,7 @@ async def delegate_task(req: DelegateTaskReq):
         )
     except Exception as e:
         logger.error({"msg": "delegate-task 启动异常", "error": str(e)}, trace)
-        from tools.cloud_mobile.session import is_session_dead_error
+        from tools.wuying_cloud.session import is_session_dead_error
         if is_session_dead_error(e):
             w.session_mgr.mark_dead("delegate-task", str(e), trace)
         return {"ok": False, "error": str(e), "summary": ""}
@@ -159,7 +159,7 @@ async def delegate_task(req: DelegateTaskReq):
             result = await asyncio.to_thread(handle.wait, req.timeout_seconds)
         except Exception as e:
             logger.error({"msg": "delegate-task wait 异常", "error": str(e)}, trace)
-            from tools.cloud_mobile.session import is_session_dead_error
+            from tools.wuying_cloud.session import is_session_dead_error
             if is_session_dead_error(e):
                 w.session_mgr.mark_dead("delegate-task", str(e), trace)
             return {"ok": False, "error": str(e), "summary": ""}

@@ -10,9 +10,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import config
-from tools.cloud_mobile import CloudMobileEnv, SessionManager
+from tools.chrome_local import ChromeLocalEnv
 from tools.environment import Environment
-from tools.macos_chrome import MacOSChromeEnv
+from tools.wuying_cloud import SessionManager, WuyingDesktopEnv, WuyingMobileEnv
 
 if TYPE_CHECKING:
     from agents.operator import SubtaskStrategy, VisionActionStep
@@ -30,7 +30,7 @@ def build_session(
     account_id: str,
 ) -> SessionManager | None:
     """云端模式构造 SessionManager；本地或 remote 模式返回 None。"""
-    if mode == "local_chrome" or _is_remote():
+    if mode == "chromelocal" or _is_remote():
         return None
     ab = config.settings.agent.runtime.agentbay
     cfg = account_cfg or {}
@@ -52,7 +52,7 @@ def build_env(
     rt = config.settings.agent.runtime
     session_url = rt.session_service_url
 
-    if session_url and mode in ("cloudmobile", "agentbay"):
+    if session_url and mode in ("wuyingcloud", "agentbay"):
         from tools.remote import RemoteEnv
 
         return RemoteEnv(
@@ -63,18 +63,15 @@ def build_env(
         )
 
     match mode:
-        case "local_chrome":
-            return MacOSChromeEnv()
-        case "cloudmobile" | "agentbay":
+        case "chromelocal":
+            return ChromeLocalEnv()
+        case "wuyingcloud" | "agentbay":
             if session_mgr is None:
                 raise RuntimeError("云端模式必须提供 SessionManager")
-            ab = rt.agentbay
-            cfg = account_cfg or {}
-            return CloudMobileEnv(
-                session_mgr=session_mgr,
-                screenshot_format=cfg.get("screenshot_format") or ab.screenshot_format,
-                mode=mode,
-            )
+            # 按镜像推断 session 类型：Windows/Linux 桌面走 computer.*，Android 走 mobile.*。
+            if session_mgr.platform == "desktop":
+                return WuyingDesktopEnv(session_mgr=session_mgr, mode=mode)
+            return WuyingMobileEnv(session_mgr=session_mgr, mode=mode)
         case _:
             raise RuntimeError(f"未知 mode={mode!r}")
 
@@ -92,7 +89,7 @@ def build_strategy(
     session_url = rt.session_service_url
 
     match mode:
-        case "local_chrome" | "cloudmobile":
+        case "chromelocal" | "wuyingcloud":
             return vision_step
         case "agentbay":
             if session_url:

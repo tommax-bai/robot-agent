@@ -146,11 +146,10 @@ def _build_raw() -> dict:
                 },
             },
             "runtime": {
-                "mode": env("AGENT_RUNTIME_MODE", "local_chrome") or "local_chrome",
+                "mode": env("AGENT_RUNTIME_MODE", "wuyingcloud") or "wuyingcloud",
                 "agentbay": {
                     "api_key": env("AGENTBAY_API_KEY"),
                     "image_id": env("AGENTBAY_IMAGE_ID", "mobile_latest"),
-                    "screenshot_format": env("AGENTBAY_SCREENSHOT_FORMAT", "jpeg"),
                     "idle_release_timeout": env_int("AGENTBAY_IDLE_RELEASE_TIMEOUT", 600),
                 },
                 "auto_cleanup_orphans_on_startup": env_bool("AGENT_AUTO_CLEANUP_ORPHANS", True),
@@ -182,7 +181,7 @@ def validate() -> None:
         errors.append("topology=brain 需要环境变量 SESSION_SERVICE_URL")
     if topology == Topology.SESSION and not rt.agentbay.api_key:
         errors.append("topology=session 需要环境变量 AGENTBAY_API_KEY")
-    if rt.mode in ("cloudmobile", "agentbay") and not rt.session_service_url \
+    if rt.mode in ("wuyingcloud", "agentbay") and not rt.session_service_url \
             and not rt.agentbay.api_key:
         errors.append(
             f"runtime.mode={rt.mode} 需要 AGENTBAY_API_KEY 或 SESSION_SERVICE_URL"

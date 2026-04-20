@@ -108,11 +108,11 @@ class Host:
     def _maybe_cleanup_orphans(self) -> None:
         rt = config.settings.agent.runtime
         if (
-            rt.mode != "local_chrome"
+            rt.mode != "chromelocal"
             and not rt.session_service_url
             and rt.auto_cleanup_orphans_on_startup
         ):
-            from tools.cloud_mobile import cleanup_orphan_sessions
+            from tools.wuying_cloud import cleanup_orphan_sessions
             cleanup_orphan_sessions(rt.agentbay.api_key)
 
     def _maybe_cleanup_old_files(self) -> None:
@@ -148,8 +148,8 @@ class Host:
         display_name = cfg.get("display_name", "")
 
         if self.topology == Topology.SESSION:
-            # session-only：AgentBay 必建 session_mgr + env
-            from tools.cloud_mobile import CloudMobileEnv, SessionManager
+            # session-only：AgentBay 必建 session_mgr + env（按镜像选 mobile/desktop）
+            from tools.wuying_cloud import SessionManager, WuyingDesktopEnv, WuyingMobileEnv
 
             ab = config.settings.agent.runtime.agentbay
             session_mgr = SessionManager(
@@ -160,10 +160,10 @@ class Host:
                 event_bus=self.events,
                 account_id=account_id,
             )
-            env = CloudMobileEnv(
-                session_mgr=session_mgr,
-                screenshot_format=cfg.get("screenshot_format") or ab.screenshot_format,
-                mode=mode,
+            env = (
+                WuyingDesktopEnv(session_mgr=session_mgr, mode=mode)
+                if session_mgr.platform == "desktop"
+                else WuyingMobileEnv(session_mgr=session_mgr, mode=mode)
             )
             return Worker(
                 account_id=account_id, mode=mode, session_mgr=session_mgr,

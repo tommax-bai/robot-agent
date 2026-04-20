@@ -33,7 +33,7 @@ class RemoteEnv:
         session_service_url: str,
         account_id: str,
         api_key: str = "",
-        mode: str = "cloudmobile",
+        mode: str = "wuyingcloud",
     ):
         self._base = session_service_url.rstrip("/")
         self._account_id = account_id

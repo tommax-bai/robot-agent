@@ -12,11 +12,11 @@ Two orthogonal dimensions — **runtime mode** (where actions run) and **process
 
 | mode | environment | strategy |
 |------|-------------|----------|
-| `local_chrome` (default) | `MacOSChromeEnv` — PyAutoGUI + ImageGrab | `VisionActionStep` (own VLM) |
-| `cloudmobile` | `CloudMobileEnv` — Aliyun Wuying CloudPhone (AgentBay SDK) | `VisionActionStep` (own VLM) |
-| `agentbay` | `CloudMobileEnv` (shared session) | `AgentBayDelegateStrategy` (delegated to Aliyun `mobile_use` Agent, black-box) |
+| `chromelocal` | `ChromeLocalEnv` — PyAutoGUI + ImageGrab | `VisionActionStep` (own VLM) |
+| `wuyingcloud` (default) | `WuyingMobileEnv` / `WuyingDesktopEnv` — Aliyun Wuying (AgentBay SDK) | `VisionActionStep` (own VLM) |
+| `agentbay` | `WuyingMobileEnv` / `WuyingDesktopEnv` (shared session) | `AgentBayDelegateStrategy` (delegated to Aliyun `mobile_use` Agent, black-box) |
 
-When `SESSION_SERVICE_URL` is set, `CloudMobileEnv` is replaced by `RemoteEnv` (HTTP proxy), and `AgentBayDelegateStrategy` by `RemoteDelegateStrategy`. The agent layer doesn't know or care.
+When `SESSION_SERVICE_URL` is set, `WuyingMobileEnv` / `WuyingDesktopEnv` is replaced by `RemoteEnv` (HTTP proxy), and `AgentBayDelegateStrategy` by `RemoteDelegateStrategy`. The agent layer doesn't know or care.
 
 ### Process topology (`AGENT_TOPOLOGY`)
 
@@ -46,7 +46,7 @@ curl -X POST http://127.0.0.1:6702/api/v1/agent/actions/sync \
   -d '{"user_goal": "打开小红书首页"}'
 
 # Switch to cloud mode (no real session created until first task)
-AGENT_RUNTIME_MODE=cloudmobile AGENTBAY_API_KEY=<key> uvicorn app:app --port 6702
+AGENT_RUNTIME_MODE=wuyingcloud AGENTBAY_API_KEY=<key> uvicorn app:app --port 6702
 curl http://127.0.0.1:6702/api/v1/agent/runtime   # inspect current mode/env/strategy
 
 # Split topology: session node + brain node
@@ -145,24 +145,36 @@ All agents share the **typed contract** in `agents/base.py` (re-exports `Observa
 Two façades — `Environment` (execution) and `LlmTool` (decision-time LLM).
 
 - **`tools/environment.py`** — `Environment` Protocol: `capture(trace_id, include_cursor) -> (b64, mx, my)` + `perform(trace_id, action) -> {ok, message, finish}`. Plus `coerce_param()` for LLM-dirty-key tolerance. Consumers (`ActionDispatcher`, `VisionActionStep`, `RecipeOperator`) take it via constructor injection — never import concrete envs directly.
-- **`tools/macos_chrome/`** — `MacOSChromeEnv` + `actions.py` (click/dblclick/move/scroll/drag/paste/copy/hotkey/wait, humanised Bezier + jitter) + `capture.py` + `coordinates.py` (Window + LLM-to-screen) + `humanize.py` + `cleanup.py` (close Chrome tabs).
-- **`tools/cloud_mobile/`** — `CloudMobileEnv` + `SessionManager` (lazy session lifecycle, idle timeout, orphan cleanup) + `keymap.py` (LLM key names → Android keycodes).
+- **`tools/chrome_local/`** — `ChromeLocalEnv` + `actions.py` (click/dblclick/move/scroll/drag/paste/copy/hotkey/wait, humanised Bezier + jitter) + `capture.py` + `coordinates.py` (Window + LLM-to-screen) + `humanize.py` + `cleanup.py` (close Chrome tabs).
+- **`tools/wuying_cloud/`** — `WuyingMobileEnv` (Android cloud-phone) + `WuyingDesktopEnv` (Windows cloud-desktop) + `SessionManager` (lazy session lifecycle, idle timeout, orphan cleanup) + `keymap.py` (LLM key names → Android keycodes) + `humanize.py` (tap jitter, pre/post pause, char-by-char typing — all opt-in via `system.input` config).
 - **`tools/remote/`** — `RemoteEnv` (HTTP proxy for `capture`/`perform`) + `RemoteDelegateStrategy` (HTTP proxy for `delegate-task`). Both used only when `SESSION_SERVICE_URL` is set (brain topology, or monolith forcing remote).
 - **`tools/llm/`** — `LlmTool` (façade with `with_trace()`) + `caller.py` (retry, token logging, JSON/text/template modes) + `client.py` (OpenAI-compat HTTP). `MockLlmTool` for tests.
 
-When **adding a new atomic action** that should work cross-mode: update `tools/macos_chrome/actions.py` *and* the `_ACTION_HANDLERS` map in `tools/cloud_mobile/__init__.py`. Mobile-irrelevant actions (e.g. `move` cursor) belong in `_NOOP_ACTIONS` and should return `ok=True` so the LLM chain isn't broken. Also update `prompts/operator/action.md`.
+When **adding a new atomic action** that should work cross-mode: update `tools/chrome_local/actions.py` *and* the `_ACTION_HANDLERS` map in `tools/wuying_cloud/__init__.py` (and `desktop.py` if applicable). Mobile-irrelevant actions (e.g. `move` cursor) belong in `_NOOP_ACTIONS` and should return `ok=True` so the LLM chain isn't broken. Also update `prompts/operator/action.md`.
 
-#### Keyboard semantics (cloud_mobile / agentbay)
+#### Keyboard semantics (wuying_cloud / agentbay)
 
 阿里无影 SDK `mobile.send_key(key:int)` 只接受 6 个 keycode：`HOME (3) / BACK (4) / VOLUME_UP (24) / VOLUME_DOWN (25) / POWER (26) / MENU (82)`。没有 meta 键通道（无法发 `command+X` / `ctrl+X`），也没有 `enter` / `tab` / `backspace` / 方向键。
 
 跨 mode 可用的原子动作：`click / dblclick / scroll / drag / paste / long_press / clear_input / wait / hotkey(单键) / finish`（见 [prompts/operator/action.md](prompts/operator/action.md)）。
 - **组合键**：`_do_hotkey` 检测到 `+` 直接拒绝，error 消息提示 LLM 用 `clear_input` / `paste` / 硬件单键替代。
-- **清空输入框**：`clear_input(x,y)` 在 cloud_mobile 下做 `tap + swipe(x,y,x,y,650ms)`（长按），唤起 Android 文本选择菜单，**下一拍由 LLM 视觉接"全选 → 删除"**；在 local_chrome 下一把梭（click → command+a → delete）。
+- **清空输入框**：`clear_input(x,y)` 在 wuyingcloud 下做 `tap + swipe(x,y,x,y,650ms)`（长按），唤起 Android 文本选择菜单，**下一拍由 LLM 视觉接"全选 → 删除"**；在 chromelocal 下一把梭（click → command+a → delete）。
 - **Enter / 退格 / 方向键**：云手机只能视觉 `click` 屏幕键盘上的对应按钮。`paste` 的 text 里带 `\n` 可能被 IME 识别为换行，不保证。
 - **中文输入**：`paste(text)` 走 `mobile.input_text`，系统 IME 自带，支持 UTF-8。
 
-新增涉及键盘的 skill 工具或修改 instructions 时，**必须**按 mode 拆写：local_chrome 一套、cloudmobile/agentbay 一套，不要只写桌面版再假设云手机能用。
+新增涉及键盘的 skill 工具或修改 instructions 时，**必须**按 mode 拆写：chromelocal 一套、wuyingcloud/agentbay 一套，不要只写桌面版再假设云手机能用。
+
+#### 拟人化 (humanization)
+
+| 行为 | chromelocal | wuyingcloud |
+|------|---|---|
+| click 坐标 | ±2px jitter + Bezier 移动 | `mobile.tap(x,y)` 精确坐标；可开 `tap_jitter_px` 加 ±N px 抖动 |
+| drag 路径 | 三段 Bezier，40~100+ 路点 | 单次 `swipe(...,duration_ms)`，server-side 原子，无路点 |
+| paste 文本 | 整段 `pyperclip + cmd+v`，前后 0.02~0.15s 随机停顿 | 默认一次性 `input_text`；开 `paste_per_char` 后 client-side 切字符 + 每字 `[min_ms,max_ms]` 均匀抖动 |
+| 动作前后停顿 | 内置 `pre_action_pause` / `post_action_pause` | 默认无；开 `pre_action_pause` 后所有 `_do_*` 前后随机停顿 |
+| hotkey | 任意 pyautogui 键名/组合 | 仅 6 个硬件单键（HOME/BACK/MENU/VOLUME_UP/VOLUME_DOWN/POWER），组合键直接拒绝 |
+
+无影侧的拟人化全部默认关，行为等价于现状；要开启只需在 `.env`（或 yaml）里调 `system.input.{paste_per_char, paste_min_delay_ms, paste_max_delay_ms, tap_jitter_px, pre_action_pause}`。SDK 限制：drag/swipe 是 server-side 原子调用（无法插路点），多键组合无通道，`mobile.send_key` 仅 6 个硬件键。
 
 ### Skills (`skills/`)
 
@@ -177,7 +189,7 @@ skills/rednote_explorer/
 skills/rednote_publish/
 ```
 
-A skill declares its `supports=("local_chrome",)` tuple; tools are invoked through `SkillRegistry.invoke_tool(name, params, ToolContext(trace_id, ...))` and return a `ToolOutcome`. Instructions are scanned at boot; scripts lazy-load on first use.
+A skill declares its `supports=("chromelocal",)` tuple; tools are invoked through `SkillRegistry.invoke_tool(name, params, ToolContext(trace_id, ...))` and return a `ToolOutcome`. Instructions are scanned at boot; scripts lazy-load on first use.
 
 Adding a skill: create a package dir, define `pack = Pack(name=..., description=..., supports=(...))`, decorate functions with `@pack.tool`, write `instructions.md`. No registry edits needed.
 
@@ -196,11 +208,10 @@ Environment-driven entries that matter most:
 
 ```text
 AGENT_TOPOLOGY              monolith | brain | session          (default: monolith)
-AGENT_RUNTIME_MODE          local_chrome | cloudmobile | agentbay (default: local_chrome)
-AGENTBAY_API_KEY            required when mode != local_chrome (unless remote)
-AGENTBAY_IMAGE_ID           default: mobile_latest
-AGENTBAY_SCREENSHOT_FORMAT  jpeg|png (default: jpeg)
-AGENTBAY_IDLE_RELEASE_TIMEOUT  seconds, default 600
+AGENT_RUNTIME_MODE          chromelocal | wuyingcloud | agentbay (default: wuyingcloud)
+AGENTBAY_API_KEY            required when mode != chromelocal (unless remote)
+AGENTBAY_IMAGE_ID           default: mobile_latest (use `computer-use-windows-server-2022` for desktop)
+AGENTBAY_IDLE_RELEASE_TIMEOUT  seconds, default 600 (ignored if SDK ≥0.15 drops the kwarg)
 SESSION_SERVICE_URL         if set → use RemoteEnv/RemoteDelegateStrategy
 SESSION_SERVICE_API_KEY     bearer token for Session Service
 AGENT_AUTO_CLEANUP_ORPHANS  default true; disable when multiple replicas share one API key
@@ -209,7 +220,7 @@ APP_ENV                     selects .{APP_ENV}.env file in non-Docker
 
 ### Multi-account / worker matrix
 
-`config.settings.agent.accounts` is a list of per-account overrides (`id`, `display_name`, `mode`, `image_id`, `state_file`, `screenshot_format`). Empty list → single `default` worker (backwards compatible).
+`config.settings.agent.accounts` is a list of per-account overrides (`id`, `display_name`, `mode`, `image_id`, `state_file`). Empty list → single `default` worker (backwards compatible). Screenshot post-processing parameters (quality/palette/posterize/saturation) are global per runtime mode under `system.screenshot.{chromelocal,wuyingcloud}`, not per-account.
 
 Each worker has its own state file (`data/accounts/{id}/agent_state.json` by default), its own cloud session, its own `Supervisor` + runtime mode. Shared across workers: `LlmTool`, `SkillRegistry`, `IntentRegistry`, `PageContextCache`, `VisualLocator`, `RecipeStore`, `TraceRecorder`, `BehaviorSummarizer`, `Planner`, `EventBus`.
 
@@ -259,7 +270,7 @@ Operator.run(task, ctx)
    ↓           execute steps via Environment (skip LLM) → resolved
    ↓         no match → skipped
    ↓       StrategyResolver → strategy.run() with RetryPolicy
-   ↓         VisionActionStep (local_chrome / cloudmobile):
+   ↓         VisionActionStep (chromelocal / wuyingcloud):
    ↓           loop:
    ↓             _observe → env.capture + PageContextCache.get_or_classify
    ↓             _think   → ctx.llm.call_json (with conversation history)
@@ -280,8 +291,8 @@ TaskResult  → aggregated by agents.result_aggregation
 ### Coordinate system
 
 LLM produces normalised coordinates in 0-1000 range. Each environment converts internally:
-- `MacOSChromeEnv` — `tools/macos_chrome/coordinates.py::Window.llm_to_screen()` uses the current Chrome window position (updated on each capture).
-- `CloudMobileEnv` — `_llm_to_pixel()` uses screen dimensions cached from the most recent `beta_take_screenshot()` via `SessionManager.update_screen_size()`. The vision loop guarantees a capture precedes any action, so the cache is always populated.
+- `ChromeLocalEnv` — `tools/chrome_local/coordinates.py::Window.llm_to_screen()` uses the current Chrome window position (updated on each capture).
+- `WuyingMobileEnv` / `WuyingDesktopEnv` — `_llm_to_pixel()` uses screen dimensions cached from the most recent `beta_take_screenshot()` via `SessionManager.update_screen_size()`. The vision loop guarantees a capture precedes any action, so the cache is always populated.
 
 ### Cancellation
 
@@ -304,7 +315,7 @@ Brain-side (`tasks.py` / `workers.py` / `callbacks.py` / `usage.py` / `chrome_pr
 - `POST /api/v1/agent/session/release` — force-release cloud session
 - `POST /api/v1/agent/mode/{debug,waiting}` / `POST /agent/patrol` / `POST /agent/scheduled/patrol-once` — supervisor controls
 - `GET  /api/v1/usage/daily_stats` / `/usage/details` / `/usage/list_dates` — token accounting
-- `GET  /api/v1/agent/chrome/{path}` / `WS /api/v1/agent/chrome/ws/{page_id}` — CDP proxy (local_chrome only useful)
+- `GET  /api/v1/agent/chrome/{path}` / `WS /api/v1/agent/chrome/ws/{page_id}` — CDP proxy (chromelocal only useful)
 
 Session-side (`sessions.py`):
 - `POST /api/v1/session/acquire` / `.../release` / `GET /session/status` / `/session/url`
@@ -319,10 +330,10 @@ Every brain endpoint that talks about a worker accepts an optional `account_id`;
 
 ## Important Notes
 
-- **OS dependency depends on mode**: `local_chrome` requires macOS + `PyAutoGUI` + `pyobjc` + accessibility permissions; `cloudmobile` / `agentbay` only need `wuying-agentbay-sdk` + API key.
-- **Chrome launch is in `bootstrap/`** (only in monolith + `local_chrome`): `bootstrap.boot()` runs `chrome_install.ensure_installed()` + `chrome_launch.prepare()` + `chrome_client.start()`. Configurable via `CHROME_BINARY` and `CHROMEDRIVER_PATH`.
-- **Cloud session is lazy**: constructing `CloudMobileEnv` / `SessionManager` does not allocate a cloud instance. The session is created on the first `capture()` / `perform()` / `acquire()` call. Inspect via `GET /api/v1/agent/runtime` (`session_active` field).
-- **Orphan cleanup**: `Host` boots call `tools.cloud_mobile.cleanup_orphan_sessions()` unless `AGENT_AUTO_CLEANUP_ORPHANS=false`. Disable when multiple replicas share one API key, otherwise they'll kill each other's sessions.
+- **OS dependency depends on mode**: `chromelocal` requires macOS + `PyAutoGUI` + `pyobjc` + accessibility permissions; `wuyingcloud` / `agentbay` only need `wuying-agentbay-sdk` + API key.
+- **Chrome launch is in `bootstrap/`** (only in monolith + `chromelocal`): `bootstrap.boot()` runs `chrome_install.ensure_installed()` + `chrome_launch.prepare()` + `chrome_client.start()`. Configurable via `CHROME_BINARY` and `CHROMEDRIVER_PATH`.
+- **Cloud session is lazy**: constructing `WuyingMobileEnv` / `WuyingDesktopEnv` / `SessionManager` does not allocate a cloud instance. The session is created on the first `capture()` / `perform()` / `acquire()` call. Inspect via `GET /api/v1/agent/runtime` (`session_active` field).
+- **Orphan cleanup**: `Host` boots call `tools.wuying_cloud.cleanup_orphan_sessions()` unless `AGENT_AUTO_CLEANUP_ORPHANS=false`. Disable when multiple replicas share one API key, otherwise they'll kill each other's sessions.
 - **Codebase language**: comments, prompts, log messages are Chinese; Python identifiers and types are English.
 - **No test framework configured** — `MockLlmTool` + `InMemoryStateRepo` exist for future tests; no pytest setup yet.
 - **State storage**: per-worker JSON at `data/accounts/{id}/agent_state.json` (or `data/agent_state.json` for the default worker). Schema in `services.state.DEFAULT_STATE` — extend there when adding fields.

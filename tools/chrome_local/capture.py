@@ -1,5 +1,5 @@
 """
-本地 Chrome 窗口截图：CDP 对齐选窗 → ImageGrab 截屏 → 色彩压缩 → base64。
+本地 Chrome 窗口截图：CDP 对齐选窗 → ImageGrab 截屏 → 压缩 profile → base64。
 """
 
 from __future__ import annotations
@@ -7,15 +7,15 @@ from __future__ import annotations
 import base64
 import os
 import time
-from io import BytesIO
 
 import pyautogui
 import pywinctl
-from PIL import Image, ImageDraw, ImageEnhance, ImageGrab, ImageOps
+from PIL import Image, ImageDraw, ImageGrab
 
 import config
 import utils.logger as logger
-from tools.macos_chrome.coordinates import Window
+from tools.image_postprocess import encode_for_llm
+from tools.chrome_local.coordinates import Window
 
 
 def capture(
@@ -40,25 +40,25 @@ def capture(
 
     screen_img = ImageGrab.grab(bbox=(win.left, win.top, win.right, win.bottom))
 
-    # 压缩 + 色彩减淡，降低 LLM 输入 token
-    screen_img = screen_img.convert("P", palette=Image.ADAPTIVE, colors=128)
-    screen_img = screen_img.convert("RGB")
-    screen_img = ImageEnhance.Color(screen_img).enhance(0.7)
-    screen_img = ImageOps.posterize(screen_img, bits=5)
-
     if include_cursor:
         mouse_x_scaled, mouse_y_scaled = _draw_mouse_cursor(screen_img, win)
 
+    # 统一走 image_postprocess.encode_for_llm —— chromelocal profile 默认激进压缩
     ss = config.settings.system.screenshot
+    data, _content_type = encode_for_llm(screen_img, ss.chromelocal)
+
     if ss.persist:
         save_dir = ss.save_dir
         full_path = os.path.join(save_dir, trace_id)
         os.makedirs(full_path, exist_ok=True)
-        screen_img.save(os.path.join(full_path, f"screenshot_{time.time()}.jpeg"))
+        # 落盘用编码后的字节，和发给 LLM 的完全一致，便于复现问题
+        ext = ss.chromelocal.format.lower()
+        if ext == "jpg":
+            ext = "jpeg"
+        with open(os.path.join(full_path, f"screenshot_{time.time()}.{ext}"), "wb") as f:
+            f.write(data)
 
-    buf = BytesIO()
-    screen_img.save(buf, format="JPEG", quality=75)
-    b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+    b64 = base64.b64encode(data).decode("utf-8")
 
     window.update(
         x=win.left,

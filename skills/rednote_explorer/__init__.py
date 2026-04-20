@@ -16,14 +16,14 @@ pack = Pack(
         "小红书内容探索与收割专家。负责在指定领域内巡逻、发现高赞爆款内容，并执行点赞、收藏及知识收割。"
         "视频笔记仅允许浏览，不点赞不收藏。"
     ),
-    # 指令对 cloudmobile 也有参考价值（点赞/收藏策略通用），
+    # 指令对 wuyingcloud 也有参考价值（点赞/收藏策略通用），
     # 但本包的工具实现是 selenium-only，靠 tool-level supports 限定
-    supports=("local_chrome", "cloudmobile"),
+    supports=("chromelocal", "wuyingcloud"),
 )
 
 
-# selenium 打开网页，仅 local_chrome 可用
-@pack.tool(supports=("local_chrome",))
+# selenium 打开网页，仅 chromelocal 可用
+@pack.tool(supports=("chromelocal",))
 def rednote_open_search_page(ctx: ToolContext, keyword: str = "") -> ToolOutcome:
     """打开小红书搜索结果页。keyword 必填，不再使用业务默认值。"""
     if not keyword or not keyword.strip():

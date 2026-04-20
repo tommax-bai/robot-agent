@@ -17,8 +17,8 @@ import pyperclip
 import config
 import utils.logger as logger
 from tools.environment import coerce_param
-from tools.macos_chrome import humanize
-from tools.macos_chrome.coordinates import Window
+from tools.chrome_local import humanize
+from tools.chrome_local.coordinates import Window
 
 # 禁用 PyAutoGUI FAILSAFE，防止鼠标滑到角落时任务中断
 pyautogui.FAILSAFE = False

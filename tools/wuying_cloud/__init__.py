@@ -1,5 +1,5 @@
 """
-阿里无影云手机执行环境（CloudMobileEnv）。
+阿里无影云手机执行环境（WuyingMobileEnv）。
 
 职责：把 click/scroll/paste/... 等原子动作映射到 mobile.tap / swipe / input_text / send_key，
 截屏 → base64。Session 生命周期由注入的 SessionManager 管理。
@@ -8,11 +8,16 @@
 from __future__ import annotations
 
 import base64
+import inspect
 import time
+from io import BytesIO
 from typing import TYPE_CHECKING, Any
 
+from PIL import Image
+
+import config
 import utils.logger as logger
-from tools.cloud_mobile.keymap import (
+from tools.wuying_cloud.keymap import (
     DBLCLICK_INTERVAL_MS,
     DRAG_DURATION_MS,
     HOTKEY_TO_ANDROID,
@@ -20,19 +25,42 @@ from tools.cloud_mobile.keymap import (
     SCROLL_MAX_PIXELS,
     SCROLL_PIXELS_PER_CLICK,
 )
-from tools.cloud_mobile.session import (
+from tools.wuying_cloud.desktop import WuyingDesktopEnv
+from tools.wuying_cloud.humanize import (
+    jitter_xy,
+    maybe_post_pause,
+    maybe_pre_pause,
+    type_chunked,
+)
+from tools.wuying_cloud.session import (
     SessionManager,
     SessionState,
     cleanup_orphan_sessions,
     is_session_dead_error,
+    platform_from_image_id,
 )
 from tools.environment import coerce_param
+from tools.image_postprocess import encode_for_llm
 
 if TYPE_CHECKING:
     pass
 
 
-class CloudMobileEnv:
+def _call_screenshot(mobile: Any) -> Any:
+    """兼容新老 SDK：老版接受 format=，新版 (0.15+) 无参硬编码 PNG。
+
+    统一向老版 SDK 请求 PNG（无损），把 LLM-facing 编码交给 image_postprocess。
+    """
+    try:
+        sig = inspect.signature(mobile.beta_take_screenshot)
+    except (TypeError, ValueError):
+        sig = None
+    if sig is not None and "format" in sig.parameters:
+        return mobile.beta_take_screenshot(format="png")
+    return mobile.beta_take_screenshot()
+
+
+class WuyingMobileEnv:
     """阿里无影云手机执行环境。Session 由 SessionManager 懒加载管理。"""
 
     _ACTION_HANDLERS: dict[str, str] = {
@@ -54,17 +82,14 @@ class CloudMobileEnv:
     def __init__(
         self,
         session_mgr: SessionManager,
-        screenshot_format: str = "jpeg",
         mode: str = "agentbay",
     ):
         self._session_mgr = session_mgr
         self._mode = mode
-        fmt = screenshot_format.strip().lower()
+        # 输出格式完全由 config.settings.system.screenshot.wuyingcloud.format 决定
+        fmt = config.settings.system.screenshot.wuyingcloud.format.lower()
         if fmt == "jpg":
             fmt = "jpeg"
-        if fmt not in ("png", "jpeg"):
-            raise RuntimeError(f"screenshot_format 必须是 png 或 jpeg，收到 {screenshot_format!r}")
-        self._screenshot_format = fmt
         self.content_type = f"image/{fmt}"
 
     # ── Environment 协议 ──────────────────────────────────────
@@ -74,7 +99,7 @@ class CloudMobileEnv:
     ) -> tuple[str, int, int]:
         session = self._session_mgr.acquire(trace_id)
         try:
-            result = session.mobile.beta_take_screenshot(format=self._screenshot_format)
+            result = _call_screenshot(session.mobile)
         except Exception as e:
             if is_session_dead_error(e):
                 self._session_mgr.mark_dead("screenshot", str(e), trace_id)
@@ -87,14 +112,21 @@ class CloudMobileEnv:
         if result.width and result.height:
             self._session_mgr.update_screen_size(int(result.width), int(result.height))
 
-        b64 = base64.b64encode(result.data).decode("utf-8")
+        # SDK 返回原始 PNG bytes → 解码 → 按 wuyingcloud profile 重编码（统一压缩管线）
+        profile = config.settings.system.screenshot.wuyingcloud
+        img = Image.open(BytesIO(result.data))
+        data, content_type = encode_for_llm(img, profile)
+        self.content_type = content_type
+
+        b64 = base64.b64encode(data).decode("utf-8")
         w, h = self._session_mgr.screen_size
         logger.debug(
             {
                 "msg": f"[{self._mode}] 截图成功",
                 "size": f"{w}x{h}",
-                "bytes": len(result.data),
-                "format": self._screenshot_format,
+                "raw_bytes": len(result.data),
+                "encoded_bytes": len(data),
+                "content_type": content_type,
             },
             trace_id,
         )
@@ -145,17 +177,24 @@ class CloudMobileEnv:
 
     def _do_tap(self, mobile, params: dict, finish: bool) -> dict:
         x, y = self._llm_to_pixel(params)
-        result = mobile.tap(x, y)
-        return self._wrap(result, f"已点击 ({x}, {y})", finish)
+        # 拟人化：可选坐标抖动；config.system.input.tap_jitter_px=0 时等价旧行为
+        jx, jy = jitter_xy(x, y, config.settings.system.input.tap_jitter_px)
+        maybe_pre_pause()
+        result = mobile.tap(jx, jy)
+        maybe_post_pause()
+        return self._wrap(result, f"已点击 ({jx}, {jy})", finish)
 
     def _do_double_tap(self, mobile, params: dict, finish: bool) -> dict:
         x, y = self._llm_to_pixel(params)
-        r1 = mobile.tap(x, y)
+        jx, jy = jitter_xy(x, y, config.settings.system.input.tap_jitter_px)
+        maybe_pre_pause()
+        r1 = mobile.tap(jx, jy)
         if not r1.success:
-            return self._wrap(r1, f"双击第一次失败 ({x}, {y})", finish)
+            return self._wrap(r1, f"双击第一次失败 ({jx}, {jy})", finish)
         time.sleep(DBLCLICK_INTERVAL_MS / 1000.0)
-        r2 = mobile.tap(x, y)
-        return self._wrap(r2, f"已双击 ({x}, {y})", finish)
+        r2 = mobile.tap(jx, jy)
+        maybe_post_pause()
+        return self._wrap(r2, f"已双击 ({jx}, {jy})", finish)
 
     def _do_scroll(self, mobile, params: dict, finish: bool) -> dict:
         clicks = int(coerce_param(params, "clicks", 1))
@@ -164,22 +203,62 @@ class CloudMobileEnv:
         ey = sy + distance if clicks > 0 else sy - distance
         _, sh = self._session_mgr.screen_size
         ey = max(0, min(ey, max(sh - 1, 0)))
+        maybe_pre_pause()
         result = mobile.swipe(sx, sy, sx, ey, duration_ms=SCROLL_DURATION_MS)
+        maybe_post_pause()
         direction = "上" if clicks > 0 else "下"
         return self._wrap(result, f"滑动({direction} 强度{abs(clicks)})", finish)
 
     def _do_drag(self, mobile, params: dict, finish: bool) -> dict:
         x1, y1 = self._llm_to_pixel({"x": coerce_param(params, "x1"), "y": coerce_param(params, "y1")})
         x2, y2 = self._llm_to_pixel({"x": coerce_param(params, "x2"), "y": coerce_param(params, "y2")})
+        maybe_pre_pause()
         result = mobile.swipe(x1, y1, x2, y2, duration_ms=DRAG_DURATION_MS)
+        maybe_post_pause()
         return self._wrap(result, f"已拖拽 ({x1},{y1})→({x2},{y2})", finish)
 
     def _do_paste(self, mobile, params: dict, finish: bool) -> dict:
         text = str(coerce_param(params, "text", ""))
         if not text:
             return {"ok": True, "message": "paste 文本为空，已跳过", "finish": finish}
-        result = mobile.input_text(text)
+        in_cfg = config.settings.system.input
         preview = text[:20] + "…" if len(text) > 20 else text
+        maybe_pre_pause()
+
+        # 拟人化：逐字符 input_text + 随机 [min,max]ms 抖动；默认关
+        if in_cfg.paste_per_char:
+            ok, err, sent = type_chunked(
+                mobile.input_text, text,
+                min_ms=in_cfg.paste_min_delay_ms,
+                max_ms=in_cfg.paste_max_delay_ms,
+            )
+            maybe_post_pause()
+            if ok:
+                return {
+                    "ok": True,
+                    "finish": finish,
+                    "message": f'已逐字输入 "{preview}"（{sent}字）',
+                }
+            # 把"已输入到第 N 个字"信息透传，方便 LLM 决定要不要重试或 clear 重来
+            err_low = err.lower()
+            if "focused editable" in err_low or "no focused" in err_low:
+                return {
+                    "ok": False,
+                    "finish": finish,
+                    "message": (
+                        f"逐字输入第 {sent + 1}/{len(text)} 字符失败：当前没有**聚焦的可编辑输入框**。"
+                        "必须先 `click(x, y)` 点击目标输入框让它获焦、屏幕键盘弹出之后，下一拍再 paste。"
+                        f"底层报错：{err}"
+                    ),
+                }
+            return {
+                "ok": False,
+                "finish": finish,
+                "message": f"逐字输入第 {sent + 1}/{len(text)} 字符失败：{err}",
+            }
+
+        result = mobile.input_text(text)
+        maybe_post_pause()
         if not result.success:
             raw = str(getattr(result, "error_message", "") or "")
             # 云手机最常见的 paste 失败：没有 EditText 获焦；LLM 多半跳了"先 click 输入框"那步
@@ -226,17 +305,22 @@ class CloudMobileEnv:
                     "屏幕键盘上的 Enter/空格/退格/方向键请用**视觉 `click`** 点对应按钮。"
                 ),
             }
+        maybe_pre_pause()
         result = mobile.send_key(code)
+        maybe_post_pause()
         return self._wrap(result, f"已发送按键 {keys}", finish)
 
     def _do_long_press(self, mobile, params: dict, finish: bool) -> dict:
         """长按。Android 下用 swipe 起止同点 + 长 duration 模拟。
         常见用途：唤起文本选择菜单（全选/复制/粘贴）、图标长按菜单、拖拽前抓取。"""
         x, y = self._llm_to_pixel(params)
+        jx, jy = jitter_xy(x, y, config.settings.system.input.tap_jitter_px)
         ms = int(float(coerce_param(params, "milliseconds", 600) or 600))
         ms = max(ms, 400)  # 太短不触发 long-press 语义
-        result = mobile.swipe(x, y, x, y, duration_ms=ms)
-        return self._wrap(result, f"已在 ({x}, {y}) 长按 {ms}ms", finish)
+        maybe_pre_pause()
+        result = mobile.swipe(jx, jy, jx, jy, duration_ms=ms)
+        maybe_post_pause()
+        return self._wrap(result, f"已在 ({jx}, {jy}) 长按 {ms}ms", finish)
 
     def _do_clear_input(self, mobile, params: dict, finish: bool) -> dict:
         """清空输入框。移动端语义：tap 获取焦点 + 长按唤起选择菜单；清空的最后一步
@@ -294,9 +378,11 @@ class CloudMobileEnv:
 
 
 __all__ = [
-    "CloudMobileEnv",
+    "WuyingMobileEnv",
+    "WuyingDesktopEnv",
     "SessionManager",
     "SessionState",
     "is_session_dead_error",
     "cleanup_orphan_sessions",
+    "platform_from_image_id",
 ]
