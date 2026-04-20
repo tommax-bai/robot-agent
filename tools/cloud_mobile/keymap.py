@@ -17,7 +17,17 @@ HOTKEY_TO_ANDROID: dict[str, int] = {
     "back": KEY_BACK,
     "home": KEY_HOME,
     "menu": KEY_MENU,
+    # 硬件键：阿里云 wuying SDK 的 send_key 支持，值取自 AOSP KeyEvent
+    "volume_up": KEY_VOLUME_UP,
+    "volumeup": KEY_VOLUME_UP,
+    "volume_down": KEY_VOLUME_DOWN,
+    "volumedown": KEY_VOLUME_DOWN,
+    "power": KEY_POWER,
 }
+
+# 故意不映射：enter / tab / backspace / delete / arrows / space / shift / ctrl / command。
+# 阿里云 send_key 只接受 HOME/BACK/VOLUME_UP/VOLUME_DOWN/POWER/MENU 共 6 个 keycode，
+# 其他值 SDK 会直接拒收。屏幕键盘上的 Enter/退格等请让 LLM 视觉点击完成。
 
 SCROLL_PIXELS_PER_CLICK = 120
 SCROLL_MAX_PIXELS = 1600

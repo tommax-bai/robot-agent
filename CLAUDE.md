@@ -152,6 +152,18 @@ Two façades — `Environment` (execution) and `LlmTool` (decision-time LLM).
 
 When **adding a new atomic action** that should work cross-mode: update `tools/macos_chrome/actions.py` *and* the `_ACTION_HANDLERS` map in `tools/cloud_mobile/__init__.py`. Mobile-irrelevant actions (e.g. `move` cursor) belong in `_NOOP_ACTIONS` and should return `ok=True` so the LLM chain isn't broken. Also update `prompts/operator/action.md`.
 
+#### Keyboard semantics (cloud_mobile / agentbay)
+
+阿里无影 SDK `mobile.send_key(key:int)` 只接受 6 个 keycode：`HOME (3) / BACK (4) / VOLUME_UP (24) / VOLUME_DOWN (25) / POWER (26) / MENU (82)`。没有 meta 键通道（无法发 `command+X` / `ctrl+X`），也没有 `enter` / `tab` / `backspace` / 方向键。
+
+跨 mode 可用的原子动作：`click / dblclick / scroll / drag / paste / long_press / clear_input / wait / hotkey(单键) / finish`（见 [prompts/operator/action.md](prompts/operator/action.md)）。
+- **组合键**：`_do_hotkey` 检测到 `+` 直接拒绝，error 消息提示 LLM 用 `clear_input` / `paste` / 硬件单键替代。
+- **清空输入框**：`clear_input(x,y)` 在 cloud_mobile 下做 `tap + swipe(x,y,x,y,650ms)`（长按），唤起 Android 文本选择菜单，**下一拍由 LLM 视觉接"全选 → 删除"**；在 local_chrome 下一把梭（click → command+a → delete）。
+- **Enter / 退格 / 方向键**：云手机只能视觉 `click` 屏幕键盘上的对应按钮。`paste` 的 text 里带 `\n` 可能被 IME 识别为换行，不保证。
+- **中文输入**：`paste(text)` 走 `mobile.input_text`，系统 IME 自带，支持 UTF-8。
+
+新增涉及键盘的 skill 工具或修改 instructions 时，**必须**按 mode 拆写：local_chrome 一套、cloudmobile/agentbay 一套，不要只写桌面版再假设云手机能用。
+
 ### Skills (`skills/`)
 
 Skills are Python packages using a `@pack.tool` decorator, not YAML manifests:

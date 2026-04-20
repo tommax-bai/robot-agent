@@ -187,6 +187,12 @@ _DEFAULT_NOISY = {
     "selenium": "WARNING",
     "asyncio": "WARNING",
     "watchfiles": "WARNING",
+    # openai SDK 的 DEBUG 会把整个 request body（含 data:image 的 base64 图片）吐出来，
+    # 开了 dashboard 的 DEBUG 开关就被淹没，此处降噪到 INFO。
+    "openai": "INFO",
+    "openai._base_client": "INFO",
+    "httpx._client": "WARNING",
+    "anthropic": "INFO",
 }
 
 

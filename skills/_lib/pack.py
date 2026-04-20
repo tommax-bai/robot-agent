@@ -45,18 +45,29 @@ class Pack:
         # instructions.md 的正文由 loader 在扫描时写入
         self.instructions: str = ""
 
-    def tool(self, fn: ToolFn | None = None, *, name: str | None = None) -> ToolFn:
+    def tool(
+        self,
+        fn: ToolFn | None = None,
+        *,
+        name: str | None = None,
+        supports: tuple[str, ...] | None = None,
+    ) -> ToolFn:
         """注册一个工具函数。
 
-        裸用:  @pack.tool        → 函数名即工具名
-        改名:  @pack.tool(name=) → 显式命名（少见）
+        裸用:  @pack.tool                       → 函数名即工具名，继承 pack.supports
+        改名:  @pack.tool(name=)                → 显式命名（少见）
+        限模式: @pack.tool(supports=("local_chrome",))  →
+            pack 整体扩到 cloudmobile，但本工具实现是 selenium-only，只在 local_chrome 暴露
         """
         def _register(f: ToolFn) -> ToolFn:
             short = name or f.__name__
             if short in self._tools:
                 raise RuntimeError(f"pack={self.name} 已注册同名工具: {short}")
             doc = (f.__doc__ or "").strip()
-            self._tools[short] = ToolSpec(pack=self.name, name=short, description=doc, fn=f)
+            self._tools[short] = ToolSpec(
+                pack=self.name, name=short, description=doc, fn=f,
+                supports=tuple(supports) if supports is not None else None,
+            )
             return f
 
         if fn is None:

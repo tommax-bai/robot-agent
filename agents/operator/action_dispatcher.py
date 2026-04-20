@@ -36,13 +36,19 @@ if TYPE_CHECKING:
 
 
 class ActionDispatcher:
-    def __init__(self, skills: SkillRegistry, env: Environment):
+    def __init__(self, skills: SkillRegistry, env: Environment, mode: str | None = None):
         self._skills = skills
         self._env = env
+        self._mode = mode
 
-    def set_env(self, env: Environment) -> None:
-        """替换底层 Environment（用于 runtime mode 热切换）。"""
+    def set_env(self, env: Environment, mode: str | None = None) -> None:
+        """替换底层 Environment（用于 runtime mode 热切换）。mode 给出时一并更新。"""
         self._env = env
+        if mode is not None:
+            self._mode = mode
+
+    def set_mode(self, mode: str | None) -> None:
+        self._mode = mode
 
     async def dispatch(self, actions: list[Action], ctx: RunContext) -> ActionOutcome:
         results: list[ActionResult] = []
@@ -73,7 +79,7 @@ class ActionDispatcher:
         try:
             # skill 脚本多半含同步 IO（selenium/网络/文件），丢线程池别堵 loop
             payload = await asyncio.to_thread(
-                self._skills.invoke_tool, action.method, action.params, trace_id=ctx.trace_id
+                self._skills.invoke_tool, action.method, action.params, trace_id=ctx.trace_id, mode=self._mode
             )
             return ActionResult(method=action.method, ok=True, payload=payload)
         except ControlSignal:

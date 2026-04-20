@@ -109,10 +109,10 @@ class Worker:
         from agents.supervisor.supervisor import Supervisor
 
         self.strategist = build_default_strategist(llm)
-        self.dispatcher = ActionDispatcher(skills=skills, env=env)
+        self.dispatcher = ActionDispatcher(skills=skills, env=env, mode=mode)
 
         self._vision_cfg = VisionConfig.from_config()
-        self._vision_prompt_builder = VisionPromptBuilder(skills=skills)
+        self._vision_prompt_builder = VisionPromptBuilder(skills=skills, mode=mode)
         self._vision_prompt_builder.preload()
 
         self.vision_step = build_default_vision_action_step(
@@ -213,7 +213,8 @@ class Worker:
             self.mode = new_mode
             self.session_mgr = new_session
             self.env = new_env
-            self.dispatcher.set_env(new_env)
+            self.dispatcher.set_env(new_env, mode=new_mode)
+            self._vision_prompt_builder.set_mode(new_mode)
             self.vision_step = new_vision
             self.recipe_operator.set_env(new_env)
             self.strategy = new_strategy

@@ -42,7 +42,7 @@ async def lifespan(app: FastAPI):
     config.validate()
     # 用显式参数重装一次日志（import 时已自动装过一次默认 handlers，此处覆盖）。
     logger.configure(
-        level=os.getenv("LOG_LEVEL", "INFO"),
+        level=os.getenv("LOG_LEVEL", "DEBUG"),
         log_dir=os.getenv("LOG_DIR", "./logs"),
         per_trace_files=os.getenv("LOG_PER_TRACE", "1") != "0",
     )

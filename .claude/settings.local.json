@@ -4,7 +4,27 @@
       "Bash(gh pr:*)",
       "Bash(.venv/bin/python -c \"import ast; import glob; [ast.parse\\(open\\(f, encoding='utf-8'\\).read\\(\\), f\\) for f in glob.glob\\('**/*.py', recursive=True\\) if '.venv' not in f and 'skills-bak' not in f and 'skills/' not in f] and print\\('OK'\\)\")",
       "WebFetch(domain:claude.ai)",
-      "Bash(curl *)"
+      "Bash(curl *)",
+      "Bash(env)",
+      "Bash(/Users/baitianxing/codes/robot-agent/.venv/bin/pip install *)",
+      "Bash(/Users/baitianxing/codes/robot-agent/.venv/bin/python -c ' *)",
+      "Bash(ps -eo pid,command)",
+      "Bash(ps -o pid,lstart,command -p 46492)",
+      "Bash(ps -eo pid,command -p 46492)",
+      "Read(//Users/baitianxing/**)",
+      "Bash(scutil --proxy)",
+      "Bash(node -e \"const m=require\\('fs'\\).readFileSync\\('/Users/baitianxing/codes/robot-agent/static/dashboard.html','utf8'\\).match\\(/<script>\\([\\\\s\\\\S]*?\\)<\\\\/script>/\\);new Function\\(m[1]\\);console.log\\('OK'\\)\")",
+      "Bash(python3 -c ' *)",
+      "Bash(.venv/bin/python -c ' *)",
+      "Bash(python3 -m json.tool)",
+      "Bash(.venv/bin/python -u -c ' *)",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\('runtime/events.py'\\).read\\(\\)\\); print\\('OK'\\)\")",
+      "Bash(node -e \"const m=require\\('fs'\\).readFileSync\\('/Users/baitianxing/codes/robot-agent/static/dashboard.html','utf8'\\).match\\(/<script>\\([\\\\s\\\\S]*?\\)<\\\\/script>/\\);new Function\\(m[1]\\);console.log\\('JS OK'\\)\")",
+      "Bash(awk 'length>400')",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\('utils/logger.py'\\).read\\(\\)\\); print\\('OK'\\)\")",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\('tools/cloud_mobile/__init__.py'\\).read\\(\\)\\); print\\('OK'\\)\")",
+      "Bash(node -e ' *)",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\('tools/cloud_mobile/session.py'\\).read\\(\\)\\); print\\('OK'\\)\")"
     ]
   }
 }

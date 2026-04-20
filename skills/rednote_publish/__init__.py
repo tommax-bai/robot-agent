@@ -10,5 +10,6 @@ pack = Pack(
         "小红书内容发布完整模块。支持从首页开始，经过 AI 文字配图，最终完成标题、正文填写，"
         "设置\"仅自己可见\"后发布笔记。"
     ),
-    supports=("local_chrome",),
+    # 纯指令 pack（无工具）；local_chrome 和 cloudmobile 都可读发布流程指导
+    supports=("local_chrome", "cloudmobile"),
 )

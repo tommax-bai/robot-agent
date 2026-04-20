@@ -51,6 +51,9 @@ class ToolSpec:
     name: str           # 工具短名（pack 内唯一），例如 "open_rednote_homepage"
     description: str
     fn: Callable[..., ToolOutcome]
+    # None = 继承 pack.supports；给定 = 精确限制本工具可用的 runtime 模式
+    # 用法：pack 整体可用于 cloudmobile，但其中某个 selenium-only 工具 supports=("local_chrome",)
+    supports: tuple[str, ...] | None = None
 
     @property
     def fqname(self) -> str:

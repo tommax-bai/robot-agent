@@ -194,6 +194,55 @@ def _hotkey(window: Window, params: dict, finish: bool, trace_id: str) -> dict:
     return {"ok": True, "message": "已尝试快捷键操作", "finish": finish}
 
 
+def _long_press(window: Window, params: dict, finish: bool, trace_id: str) -> dict:
+    """鼠标长按。桌面上多用于拖拽的抓取阶段、右键菜单替代。"""
+    x_val = coerce_param(params, "x")
+    y_val = coerce_param(params, "y")
+    if x_val is None or y_val is None:
+        raise KeyError(f"缺少坐标参数 x 或 y, 收到: {list(params.keys())}")
+    ms = int(float(coerce_param(params, "milliseconds", 600) or 600))
+    ms = max(ms, 200)
+
+    x, y = window.llm_to_screen(float(x_val), float(y_val))
+    humanize.move(x, y)
+    humanize.pre_action_pause()
+    pyautogui.mouseDown()
+    time.sleep(ms / 1000.0)
+    pyautogui.mouseUp()
+    humanize.post_action_pause()
+
+    return {"ok": True, "message": f"已长按 ({x}, {y}) {ms}ms", "finish": finish}
+
+
+def _clear_input(window: Window, params: dict, finish: bool, trace_id: str) -> dict:
+    """清空输入框：click 获焦 → command+a 全选 → delete 删除。在桌面是完全原子的。"""
+    x_val = coerce_param(params, "x")
+    y_val = coerce_param(params, "y")
+    if x_val is None or y_val is None:
+        raise KeyError(f"缺少坐标参数 x 或 y, 收到: {list(params.keys())}")
+
+    x, y = window.llm_to_screen(float(x_val), float(y_val))
+    humanize.move(x, y)
+    humanize.pre_action_pause()
+    pyautogui.click()
+    humanize.post_action_pause()
+    time.sleep(random.uniform(0.08, 0.15))
+
+    # command+a 全选
+    pyautogui.keyDown("command")
+    time.sleep(random.uniform(0.03, 0.06))
+    pyautogui.press("a")
+    time.sleep(random.uniform(0.02, 0.05))
+    pyautogui.keyUp("command")
+    time.sleep(random.uniform(0.05, 0.10))
+
+    # delete 删除（macOS 的 delete 就是退格；forward-delete 要 fn+delete）
+    pyautogui.press("delete")
+    humanize.post_action_pause()
+
+    return {"ok": True, "message": f"已清空输入框 ({x}, {y})", "finish": finish}
+
+
 _HANDLERS = {
     "click": _click,
     "dblclick": _dblclick,
@@ -204,6 +253,8 @@ _HANDLERS = {
     "copy": _copy,
     "wait": _wait,
     "hotkey": _hotkey,
+    "long_press": _long_press,
+    "clear_input": _clear_input,
 }
 
 

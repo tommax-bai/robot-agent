@@ -211,9 +211,18 @@ class SessionManager:
                 idle_release_timeout=self._idle_release_timeout,
             )
             result = client.create(params)
-            session = getattr(result, "session", None) or result
-            if session is None:
-                raise RuntimeError(f"[{self._mode}] 云手机 session 创建失败：返回为空")
+            # SessionResult 的结构：{success, error_message, session, request_id}
+            # 失败时 session=None；不能 `or result` 退化成 SessionResult 本身，
+            # 否则下游访问 `.mobile` / `.agent` 会是 AttributeError，掩盖真实失败原因。
+            ok = getattr(result, "success", True)  # 旧版返回可能没 success 字段，兜底 True
+            session = getattr(result, "session", None)
+            if not ok or session is None:
+                err = getattr(result, "error_message", "") or "返回为空"
+                req_id = getattr(result, "request_id", "")
+                raise RuntimeError(
+                    f"[{self._mode}] 云手机 session 创建失败 (image_id={self._image_id}): "
+                    f"{err}" + (f" [request_id={req_id}]" if req_id else "")
+                )
 
             self._client = client
             self._session = session

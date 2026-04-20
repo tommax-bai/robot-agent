@@ -19,17 +19,23 @@ class VisionPromptBuilder:
     def __init__(
         self,
         skills: SkillRegistry,
+        mode: str | None = None,
         action_template: str = "prompts/operator/action.md",
         common_rules_template: str = "prompts/operator/common_skill_rules.md",
         constraint_template: str = "prompts/operator/sub_goal_constraint.md",
     ):
         self._skills = skills
+        self._mode = mode
         self._action_template = action_template
         self._common_rules_template = common_rules_template
         self._constraint_template = constraint_template
         self._action_body: str | None = None
         self._common_rules_body: str | None = None
         self._constraint_body: str | None = None
+
+    def set_mode(self, mode: str | None) -> None:
+        """热切换 runtime mode 时同步更新；build_system_prompt 会按新 mode 过滤 skill。"""
+        self._mode = mode
 
     def preload(self) -> None:
         self._load_action()
@@ -41,7 +47,7 @@ class VisionPromptBuilder:
         action_section = self._load_action().format(CURRENT_TIME=current_time)
         common_rules_section = self._load_common_rules()
         skill_section = (
-            self._skills.build_prompt([subtask.required_skill]) if subtask.required_skill else ""
+            self._skills.build_prompt([subtask.required_skill], mode=self._mode) if subtask.required_skill else ""
         )
         constraint_section = self._load_constraint().format(sub_goal=subtask.goal)
         return "\n".join([action_section, common_rules_section, skill_section, constraint_section])

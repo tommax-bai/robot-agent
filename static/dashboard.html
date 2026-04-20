@@ -2,1071 +2,1401 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<title>Agent Dashboard</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Agent</title>
 <style>
   :root {
-    --bg: #0e1116;
-    --panel: #161b22;
-    --panel-2: #1f262e;
-    --border: #30363d;
-    --text: #e6edf3;
-    --muted: #8b949e;
-    --accent: #58a6ff;
-    --green: #3fb950;
-    --yellow: #d29922;
-    --red: #f85149;
+    --bg:            #0a0a0b;
+    --surface:       #111114;
+    --surface-elev:  #17171c;
+    --surface-hi:    #1d1d24;
+    --border:        rgba(255,255,255,.06);
+    --border-hi:     rgba(255,255,255,.12);
+    --text:          #e4e4e7;
+    --muted:         #71717a;
+    --muted-2:       #52525b;
+    --accent:        #8b8ef0;
+    --accent-dim:    rgba(139,142,240,.14);
+    --success:       #10b981;
+    --warning:       #f59e0b;
+    --error:         #ef4444;
+    --radius:        6px;
+    --radius-lg:     10px;
+    --mono: "JetBrains Mono", SFMono-Regular, ui-monospace, Menlo, Consolas, monospace;
+    --sans: -apple-system, "Inter", "Segoe UI", BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
   }
   * { box-sizing: border-box; }
-  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", "PingFang SC", "Microsoft YaHei", sans-serif; font-size: 14px; }
-  header {
-    padding: 12px 20px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center;
-    background: var(--panel);
-  }
-  header h1 { margin: 0; font-size: 16px; font-weight: 600; }
-  header .conn { font-size: 12px; color: var(--muted); }
-  header .conn .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--red); margin-right: 6px; vertical-align: middle; }
-  header .conn.online .dot { background: var(--green); }
-  /* 页面自然滚动；左栏内容决定页高，右栏 sticky 吸顶不受影响 */
-  header { position: sticky; top: 0; z-index: 10; }
-  .grid { display: grid; grid-template-columns: 320px 1fr; gap: 0; align-items: start; }
-  .col { background: var(--bg); }
-  /* 右栏 sticky：滚到日志时 Live View 继续贴顶，不被遮挡 */
-  .col-right { position: sticky; top: 49px; align-self: start; max-height: calc(100vh - 49px); overflow: hidden; }
-  .panel { background: var(--panel); margin: 12px; border: 1px solid var(--border); border-radius: 6px; }
-  .panel h2 { margin: 0; padding: 8px 12px; font-size: 12px; font-weight: 600; color: var(--muted); border-bottom: 1px solid var(--border); text-transform: uppercase; letter-spacing: 0.05em; }
-  .panel .body { padding: 12px; }
-  .kv { display: grid; grid-template-columns: 90px 1fr; gap: 4px 8px; font-size: 13px; }
-  .kv .k { color: var(--muted); }
-  .kv .v { word-break: break-all; }
-  .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; text-transform: lowercase; }
-  .badge.waiting { background: #21262d; color: var(--muted); }
-  .badge.patrolling { background: #1f3a1f; color: var(--green); }
-  .badge.executing { background: #3a2f1a; color: var(--yellow); }
-  .badge.debug { background: #3a1f1f; color: var(--red); }
-  .actions { display: flex; flex-wrap: wrap; gap: 6px; }
-  /* Actions 面板内的小节分组：标签 + 按钮组 */
-  .action-group { margin-top: 12px; }
-  .action-group:first-child { margin-top: 0; }
-  .action-group h3 { margin: 0 0 6px 0; font-size: 10px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
-  .action-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
-  button {
-    background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 4px;
-    padding: 6px 12px; font-size: 12px; cursor: pointer; font-family: inherit;
-  }
-  button:hover { background: #2a323d; border-color: var(--accent); }
-  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
-  button.danger { color: var(--red); border-color: var(--red); }
-  button:disabled { opacity: 0.4; cursor: not-allowed; }
-  textarea {
-    width: 100%; min-height: 60px; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px;
-    padding: 6px; font-family: inherit; font-size: 13px; resize: vertical;
-  }
-  .liveview { background: #000; border: 1px solid var(--border); border-radius: 6px; margin: 12px; overflow: hidden; min-height: calc(100vh - 160px); display: flex; align-items: center; justify-content: center; }
-  .liveview .placeholder { padding: 40px; text-align: center; color: var(--muted); font-size: 13px; }
-  .liveview iframe { width: 100%; height: calc(100vh - 160px); min-height: 440px; border: 0; display: block; background: #000; }
-  .liveview img { max-width: 100%; max-height: calc(100vh - 160px); display: block; margin: 0 auto; }
-
-  /* Multi-view grid：所有 worker 的 live view 同屏并排 */
-  .liveview-grid { display: none; padding: 6px; gap: 6px; height: calc(100vh - 160px); overflow: auto; }
-  .liveview-grid.show { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); grid-auto-rows: minmax(280px, 1fr); }
-  .liveview-cell { background: #000; border: 1px solid var(--border); border-radius: 4px; position: relative; overflow: hidden; }
-  .liveview-cell:hover { border-color: var(--accent); }
-  .liveview-cell.active { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(88,166,255,.3); }
-  .liveview-cell iframe { width: 100%; height: 100%; border: 0; background: #000; }
-  /* 非 active cell：全身覆盖一个透明 overlay，接住第一次点击 → 切 active；
-     active cell 的 overlay 被 CSS 隐藏，iframe 可直接交互 */
-  .liveview-cell .cell-overlay {
-    position: absolute; inset: 0; z-index: 4; cursor: pointer; background: transparent;
-  }
-  .liveview-cell.active .cell-overlay { display: none; }
-  /* cell-header 是顶部 28px 浮层，承担 单击/双击 切换；不挡 iframe 主体（云手机操作不受影响） */
-  .liveview-cell .cell-header {
-    position: absolute; top: 0; left: 0; right: 0; height: 28px;
-    background: linear-gradient(180deg, rgba(0,0,0,.75) 0%, rgba(0,0,0,0) 100%);
-    display: flex; align-items: center; padding: 0 8px;
-    z-index: 5; cursor: pointer; user-select: none;
-  }
-  .liveview-cell .cell-header .label { color: var(--text); font-size: 11px; font-weight: 600; }
-  .liveview-cell .cell-header .meta { color: var(--muted); margin-left: 6px; font-weight: 400; font-size: 10.5px; }
-  .liveview-cell .cell-shutdown {
-    margin-left: auto; background: transparent; border: 1px solid transparent;
-    color: var(--muted); cursor: pointer; padding: 2px 6px; border-radius: 3px;
-    font-size: 14px; line-height: 1;
-  }
-  .liveview-cell .cell-shutdown:hover { color: var(--red); border-color: var(--red); background: rgba(248,81,73,.1); }
-  .liveview-cell .ph { display: flex; align-items: center; justify-content: center; height: 100%; color: var(--muted); font-size: 12px; padding: 12px; text-align: center; }
-  /* pending 状态（session 创建中）：placeholder 带脉动动画 */
-  .liveview .pending, .liveview-cell .pending { color: var(--accent); }
-  .liveview .pending .dot-load, .liveview-cell .pending .dot-load {
-    display: inline-block; width: 8px; height: 8px; border-radius: 50%;
-    background: var(--accent); margin-right: 8px; vertical-align: middle;
-    animation: pulse 1s ease-in-out infinite;
-  }
-  @keyframes pulse {
-    0%, 100% { opacity: 0.3; transform: scale(0.8); }
-    50%      { opacity: 1;   transform: scale(1.2); }
-  }
-  /* "返回网格"链接：仅 single + 多 worker 时显示 */
-  .back-to-grid { margin-left: auto; padding: 2px 10px; font-size: 11px; }
-
-  /* 左栏日志 panel：固定高度 + 内部滚动，行为等同独立区 */
-  .logs-panel .body { padding: 0; }
-  .logs-panel .logs { height: 420px; max-height: 420px; }
-  .logs-panel .logs:empty::before { content: '等待日志…'; color: var(--muted); font-size: 12px; display: block; padding: 10px; }
-  /* Worker tab bar */
-  .worker-tabs { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 12px; background: var(--panel); border-bottom: 1px solid var(--border); }
-  .worker-tab { padding: 4px 8px 4px 10px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--text); cursor: pointer; font-size: 12px; display: flex; gap: 6px; align-items: center; user-select: none; }
-  .worker-tab:hover { border-color: var(--accent); }
-  .worker-tab.active { border-color: var(--accent); background: var(--accent); color: #fff; }
-  .worker-tab .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); }
-  .worker-tab.exec .dot { background: var(--yellow); }
-  .worker-tab.patrol .dot { background: var(--green); }
-  .worker-tab.debug .dot { background: var(--red); }
-  .worker-tab .label { font-weight: 600; }
-  .worker-tab .meta { color: var(--muted); font-size: 10.5px; }
-  .worker-tab.active .meta { color: #cce6ff; }
-  .worker-tab .x { display: inline-block; margin-left: 4px; padding: 0 4px; color: var(--muted); border-radius: 2px; opacity: 0.5; }
-  .worker-tab .x:hover { background: var(--red); color: #fff; opacity: 1; }
-  .worker-tab.active .x { color: #cce6ff; }
-  .worker-add-tab { border: 1px solid var(--accent); color: var(--accent); background: transparent; padding: 4px 14px; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: 700; line-height: 1; }
-  .worker-add-tab:hover { background: var(--accent); color: #fff; }
-  /* 新增 worker：预设按钮组（避免 number input 高度对不齐）*/
-  .worker-add-form { display: none; padding: 8px; background: var(--panel); border-bottom: 1px solid var(--border); gap: 6px; align-items: center; font-size: 12px; }
-  .worker-add-form.show { display: flex; }
-  .worker-add-form .label { color: var(--muted); margin-right: 4px; }
-  .worker-add-form button { padding: 4px 12px; }
-
-  /* Logs panel */
-  .log-toolbar { flex: none; padding: 6px 12px; border-bottom: 1px solid var(--border); display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; font-size: 12px; }
-  .log-toolbar input[type=text] { flex: 1 1 260px; min-width: 180px; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 3px; padding: 4px 8px; font-family: inherit; font-size: 12px; }
-  .log-toolbar label { color: var(--muted); cursor: pointer; user-select: none; display: inline-flex; align-items: center; white-space: nowrap; }
-  .log-toolbar input[type=checkbox] { vertical-align: middle; margin: 0 3px 0 0; }
-  .logs { overflow: auto; font-family: SFMono-Regular, Menlo, Consolas, monospace; font-size: 11.5px; padding: 6px 12px; }
-  .logs .row { padding: 2px 0; white-space: pre-wrap; word-break: break-word; line-height: 1.5; }
-  .logs .row.lvl-INFO { color: var(--text); }
-  .logs .row.lvl-WARNING { color: var(--yellow); }
-  .logs .row.lvl-ERROR { color: var(--red); }
-  .logs .row.lvl-DEBUG { color: var(--muted); }
-  .logs .row .ts { color: var(--muted); margin-right: 6px; }
-  .logs .row .lvl { display: inline-block; min-width: 50px; opacity: 0.7; margin-right: 6px; font-weight: 600; }
-  .logs .row .trace { color: var(--accent); margin-right: 6px; }
-  .logs .row .extra { color: var(--muted); }
-  .small { color: var(--muted); font-size: 11px; margin-top: 4px; }
+  html, body { margin:0; padding:0; height:100%; background: var(--bg); color: var(--text); font-family: var(--sans); font-size: 13.5px; line-height: 1.5; }
+  button, input, textarea, select { font-family: inherit; color: inherit; }
   a { color: var(--accent); text-decoration: none; }
-  a:hover { text-decoration: underline; }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--surface-hi); border-radius: 10px; border: 2px solid var(--bg); }
+  ::-webkit-scrollbar-thumb:hover { background: var(--border-hi); }
+
+  /* ── layout ───────────────────────────────────────────── */
+  .app {
+    display: grid; grid-template-columns: 240px 1fr 380px; grid-template-rows: 44px 1fr;
+    grid-template-areas: "topbar topbar topbar" "rail transcript live";
+    height: 100vh;
+  }
+  .topbar {
+    grid-area: topbar; display: flex; align-items: center; gap: 14px;
+    padding: 0 16px; border-bottom: 1px solid var(--border); background: var(--bg);
+  }
+  .rail { grid-area: rail; border-right: 1px solid var(--border); overflow-y: auto; padding: 6px; }
+  .transcript-col { grid-area: transcript; display: flex; flex-direction: column; min-height: 0; position: relative; }
+  .transcript-scroll { flex: 1; overflow-y: auto; min-height: 0; }
+  .live-col { grid-area: live; border-left: 1px solid var(--border); display: flex; flex-direction: column; min-width: 0; }
+
+  /* ── top bar ─────────────────────────────────────────── */
+  .brand { font-weight: 600; letter-spacing: -.01em; }
+  .brand .dot { color: var(--accent); }
+  .topbar .grow { flex: 1; }
+  .ctx { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12.5px; }
+  .ctx .sep { color: var(--muted-2); }
+  .ctx b { color: var(--text); font-weight: 500; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 1px 8px; border-radius: 10px; font-size: 11px;
+    background: var(--surface-hi); color: var(--muted); font-weight: 500;
+  }
+  .pill.waiting    { background: #26272e; color: #a1a1aa; }
+  .pill.patrolling { background: rgba(16,185,129,.14); color: #34d399; }
+  .pill.executing  { background: rgba(245,158,11,.14); color: #fbbf24; }
+  .pill.debug      { background: rgba(239,68,68,.14); color: #f87171; }
+  .pill .dotm { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+  .kbd {
+    font-family: var(--mono); font-size: 10.5px; padding: 1px 6px; border-radius: 4px;
+    background: var(--surface-elev); color: var(--muted); border: 1px solid var(--border);
+  }
+  .conn { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 11.5px; }
+  .conn .bullet { width: 7px; height: 7px; border-radius: 50%; background: var(--error); }
+  .conn.online .bullet { background: var(--success); box-shadow: 0 0 0 3px rgba(16,185,129,.15); }
+
+  /* ── worker rail ─────────────────────────────────────── */
+  .rail-head { display: flex; align-items: center; justify-content: space-between; padding: 6px 8px 4px; }
+  .rail-head .h { color: var(--muted); font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; font-weight: 600; }
+  .rail-head button.add {
+    width: 20px; height: 20px; padding: 0; border-radius: 4px; border: 0;
+    background: transparent; color: var(--muted); font-size: 15px; line-height: 1; cursor: pointer;
+  }
+  .rail-head button.add:hover { background: var(--surface-hi); color: var(--text); }
+
+  .worker {
+    display: grid; grid-template-columns: 22px 1fr auto; gap: 8px; align-items: center;
+    padding: 6px 8px; border-radius: var(--radius); cursor: pointer; user-select: none;
+    margin-bottom: 2px;
+  }
+  .worker:hover { background: var(--surface-elev); }
+  .worker.active { background: var(--surface-hi); }
+  .worker.active .name { color: var(--text); }
+  .worker .avatar {
+    width: 22px; height: 22px; border-radius: 5px; display: flex; align-items: center; justify-content: center;
+    color: #fff; font-size: 11px; font-weight: 600; letter-spacing: -.01em;
+  }
+  .worker .meta { min-width: 0; }
+  .worker .name { color: var(--text); font-weight: 500; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .worker .sub { color: var(--muted); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; }
+  .worker .status-dot {
+    width: 6px; height: 6px; border-radius: 50%; background: var(--muted-2); flex: none;
+  }
+  .worker .status-dot.executing  { background: var(--warning); box-shadow: 0 0 0 3px rgba(245,158,11,.18); }
+  .worker .status-dot.patrolling { background: var(--success); }
+  .worker .status-dot.debug      { background: var(--error); }
+  .worker .status-dot.waiting    { background: var(--muted-2); }
+  .worker .x {
+    opacity: 0; width: 16px; height: 16px; border: 0; border-radius: 4px;
+    background: transparent; color: var(--muted); cursor: pointer; font-size: 14px; line-height: 1;
+  }
+  .worker:hover .x { opacity: .7; }
+  .worker .x:hover { background: rgba(239,68,68,.18); color: #fca5a5; opacity: 1; }
+
+  /* ── transcript ──────────────────────────────────────── */
+  .transcript {
+    max-width: 760px; margin: 0 auto; padding: 24px 28px 40px;
+  }
+  .goal-card {
+    padding: 18px 20px; background: var(--surface); border-radius: var(--radius-lg);
+    margin-bottom: 28px; border: 1px solid var(--border);
+  }
+  .goal-card .goal-label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .08em; font-weight: 600; margin-bottom: 6px; }
+  .goal-card .goal { font-size: 15px; line-height: 1.55; color: var(--text); white-space: pre-wrap; word-break: break-word; }
+  .goal-card .meta { display: flex; gap: 12px; margin-top: 10px; color: var(--muted); font-size: 11.5px; }
+  .goal-card.idle .goal { color: var(--muted); }
+
+  .bubbles { display: flex; flex-direction: column; gap: 14px; }
+  .bubble {
+    display: grid; grid-template-columns: 28px 1fr; gap: 12px; align-items: flex-start;
+  }
+  .bubble.fresh { animation: slideIn .18s ease-out; }
+  @keyframes slideIn {
+    from { opacity: 0; transform: translateY(4px); }
+    to   { opacity: 1; transform: none; }
+  }
+  .bubble.fresh .body { box-shadow: 0 0 0 1px var(--accent-dim); transition: box-shadow 1.4s ease; }
+  .bubble.fresh.calm .body { box-shadow: 0 0 0 1px transparent; }
+
+  .bubble .icon {
+    width: 26px; height: 26px; border-radius: 50%; background: var(--surface-elev);
+    display: flex; align-items: center; justify-content: center; font-size: 13px; margin-top: 2px;
+    color: var(--muted);
+  }
+  .bubble .body {
+    background: var(--surface); border-radius: var(--radius-lg); padding: 10px 14px;
+    min-width: 0; border: 1px solid var(--border);
+  }
+  .bubble .head { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 11px; }
+  .bubble .head b { color: var(--text); font-weight: 500; font-size: 12.5px; }
+  .bubble .head .ts { color: var(--muted-2); font-family: var(--mono); font-size: 11px; }
+  .bubble .content { margin-top: 6px; color: var(--text); font-size: 13px; line-height: 1.55; white-space: pre-wrap; word-break: break-word; }
+  .bubble .kv { margin-top: 8px; font-family: var(--mono); font-size: 11.5px; color: var(--muted); }
+  .bubble .kv span { color: var(--text); }
+  .bubble.task .icon      { background: rgba(139,142,240,.16); color: var(--accent); }
+  .bubble.plan .icon      { background: rgba(139,142,240,.10); color: var(--accent); }
+  .bubble.subtask .icon   { background: var(--surface-hi); color: var(--text); }
+  .bubble.step .icon      { background: var(--surface-elev); color: var(--muted); }
+  .bubble.recipe .icon    { background: rgba(16,185,129,.14); color: #34d399; }
+  .bubble.finish .icon    { background: rgba(16,185,129,.18); color: #34d399; }
+  .bubble.error .icon     { background: rgba(239,68,68,.18); color: #f87171; }
+  .bubble.error .body     { border-color: rgba(239,68,68,.35); }
+  .bubble .thought { color: var(--muted); font-style: italic; }
+  .bubble .actions { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+  .bubble .chip { background: var(--surface-elev); color: var(--text); font-family: var(--mono); font-size: 11px; padding: 2px 8px; border-radius: 4px; }
+  .bubble .outcome-ok { color: var(--success); font-size: 11.5px; margin-top: 4px; }
+  .bubble .outcome-err { color: var(--error); font-size: 11.5px; margin-top: 4px; }
+  .bubble details { margin-top: 8px; }
+  .bubble details summary { color: var(--muted); font-size: 11px; cursor: pointer; user-select: none; }
+  .bubble details pre { margin: 6px 0 0; padding: 8px 10px; background: var(--bg); border-radius: 4px; font-family: var(--mono); font-size: 11px; color: var(--muted); white-space: pre-wrap; word-break: break-word; max-height: 240px; overflow: auto; }
+
+  .empty-state { text-align: center; color: var(--muted); padding: 80px 20px; }
+  .empty-state .hint { margin-top: 6px; font-size: 12px; }
+  .empty-state .hint .kbd { margin-left: 4px; }
+
+  .compose {
+    flex: 0 0 auto; border-top: 1px solid var(--border);
+    padding: 14px 28px 16px; background: var(--bg);
+  }
+  .compose-inner { max-width: 760px; margin: 0 auto; }
+  .compose-box {
+    display: flex; gap: 8px; align-items: flex-end;
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg);
+    padding: 8px 10px; transition: border-color .12s ease;
+  }
+  .compose-box:focus-within { border-color: var(--accent); }
+  .compose-box textarea {
+    flex: 1; background: transparent; border: 0; outline: 0; resize: none;
+    font-size: 13.5px; line-height: 1.45; color: var(--text); max-height: 140px; padding: 4px 2px;
+  }
+  .compose-box textarea::placeholder { color: var(--muted-2); }
+  .compose-box .send {
+    height: 28px; padding: 0 14px; border-radius: 6px; border: 0; cursor: pointer;
+    background: var(--accent); color: #0b0b10; font-weight: 600; font-size: 12px;
+  }
+  .compose-box .send:hover:not(:disabled) { filter: brightness(1.08); }
+  .compose-box .send:disabled { opacity: .4; cursor: not-allowed; }
+  .compose .hint { color: var(--muted); font-size: 11px; margin-top: 6px; display: flex; gap: 12px; align-items: center; }
+  .compose .hint .cancel-btn {
+    border: 0; background: transparent; color: var(--muted); cursor: pointer; font-size: 11px; padding: 0;
+  }
+  .compose .hint .cancel-btn:hover { color: var(--error); }
+  .compose-target {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 2px 6px 2px 4px; border-radius: 4px;
+    color: var(--muted); font-size: 11px;
+    transition: background .1s ease;
+  }
+  .compose-target:hover { background: var(--surface-elev); color: var(--text); }
+  .compose-target .compose-target-arrow { color: var(--muted-2); }
+  .compose-target .compose-target-mode {
+    font-family: var(--mono); font-size: 10.5px;
+    padding: 1px 5px; border-radius: 3px;
+    background: var(--surface-elev); color: var(--accent);
+  }
+  .compose-target .compose-target-mode.local_chrome { color: #fbbf24; }
+  .compose-target .compose-target-mode.cloudmobile  { color: #8b8ef0; }
+  .compose-target .compose-target-mode.agentbay     { color: #34d399; }
+  .compose-result { color: var(--muted); font-size: 11px; margin-top: 4px; min-height: 14px; }
+
+  /* ── live view ───────────────────────────────────────── */
+  .live-head { padding: 8px 14px; color: var(--muted); font-size: 11px; letter-spacing: .06em; text-transform: uppercase; font-weight: 600; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid var(--border); }
+  .live-head .status { font-size: 11px; color: var(--muted); text-transform: none; letter-spacing: 0; font-weight: 400; margin-left: auto; }
+  .live-body { flex: 1; min-height: 0; background: #000; position: relative; display: flex; }
+  .live-body .ph { color: var(--muted); font-size: 12px; margin: auto; padding: 20px; text-align: center; max-width: 300px; line-height: 1.6; }
+  .live-body .ph .pulse { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); margin-right: 8px; vertical-align: middle; animation: pulse 1.1s ease-in-out infinite; }
+  @keyframes pulse {
+    0%, 100% { opacity: .3; transform: scale(.8); }
+    50%      { opacity: 1;  transform: scale(1.2); }
+  }
+  .live-body iframe { flex: 1; width: 100%; border: 0; background: #000; }
+  .live-body img { width: 100%; height: 100%; object-fit: contain; display: block; }
+  .live-body .refresh-btn {
+    display: inline-block; margin-top: 12px; padding: 6px 14px; border-radius: 6px;
+    background: var(--accent); color: #0b0b10; border: 0; cursor: pointer; font-size: 12px; font-weight: 600;
+  }
+  .live-foot { padding: 6px 10px; font-size: 11px; color: var(--muted); border-top: 1px solid var(--border); display: flex; gap: 8px; align-items: center; }
+  .live-foot a { color: var(--accent); }
+  .live-foot .muted-icon {
+    width: 22px; height: 22px; border-radius: 4px; border: 0; background: transparent;
+    color: var(--muted); cursor: pointer; font-size: 13px;
+  }
+  .live-foot .muted-icon:hover { background: var(--surface-hi); color: var(--text); }
+
+  /* ── command palette ─────────────────────────────────── */
+  .cmd-backdrop {
+    position: fixed; inset: 0; background: rgba(5,5,8,.6); backdrop-filter: blur(4px);
+    display: none; z-index: 100; align-items: flex-start; justify-content: center; padding-top: 14vh;
+  }
+  .cmd-backdrop.open { display: flex; }
+  .cmd {
+    width: 560px; max-width: 92vw; background: var(--surface-elev); border: 1px solid var(--border-hi);
+    border-radius: var(--radius-lg); box-shadow: 0 24px 64px rgba(0,0,0,.5); overflow: hidden;
+  }
+  .cmd input {
+    width: 100%; border: 0; outline: 0; background: transparent; color: var(--text);
+    padding: 14px 16px; font-size: 14px; border-bottom: 1px solid var(--border);
+  }
+  .cmd input::placeholder { color: var(--muted-2); }
+  .cmd-results { max-height: 48vh; overflow-y: auto; padding: 6px 0; }
+  .cmd-row {
+    display: flex; align-items: center; gap: 10px; padding: 7px 16px; cursor: pointer;
+    color: var(--text); font-size: 13px;
+  }
+  .cmd-row .cmd-ic { width: 18px; color: var(--muted); text-align: center; font-size: 12px; }
+  .cmd-row .cmd-hint { margin-left: auto; color: var(--muted); font-size: 11px; font-family: var(--mono); }
+  .cmd-row.active { background: var(--accent-dim); }
+  .cmd-row.active .cmd-ic { color: var(--accent); }
+  .cmd-empty { color: var(--muted); padding: 14px 16px; font-size: 12px; }
+
+  /* ── inline prompt modal (for prompt/confirm-ish needs) ── */
+  .modal-backdrop { position: fixed; inset: 0; background: rgba(5,5,8,.6); backdrop-filter: blur(2px); display: none; z-index: 99; align-items: center; justify-content: center; }
+  .modal-backdrop.open { display: flex; }
+  .modal { width: 440px; max-width: 92vw; background: var(--surface-elev); border: 1px solid var(--border-hi); border-radius: var(--radius-lg); padding: 18px 20px; }
+  .modal h3 { margin: 0 0 6px; font-size: 14px; font-weight: 600; }
+  .modal p { margin: 0 0 14px; color: var(--muted); font-size: 12.5px; }
+  .modal .row { display: flex; gap: 8px; justify-content: flex-end; }
+  .modal input, .modal select { width: 100%; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; font-size: 13px; margin-bottom: 12px; }
+  .modal button { background: var(--surface-hi); border: 1px solid var(--border); color: var(--text); padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 12.5px; }
+  .modal button:hover { border-color: var(--border-hi); }
+  .modal button.primary { background: var(--accent); color: #0b0b10; border-color: var(--accent); font-weight: 600; }
+  .modal button.danger { color: #f87171; border-color: rgba(239,68,68,.4); background: transparent; }
+
+  /* ── logs drawer ────────────────────────────────────── */
+  .drawer {
+    position: fixed; left: 0; right: 0; bottom: 0; height: 44vh; background: var(--surface);
+    border-top: 1px solid var(--border); transform: translateY(100%); transition: transform .2s ease;
+    z-index: 40; display: flex; flex-direction: column;
+  }
+  .drawer.open { transform: none; }
+  .drawer-head { display: flex; align-items: center; gap: 10px; padding: 8px 14px; border-bottom: 1px solid var(--border); }
+  .drawer-head .h { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; font-weight: 600; }
+  .drawer-head input[type=text] { flex: 1; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 4px 10px; font-size: 12px; color: var(--text); outline: 0; }
+  .drawer-head label { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); font-size: 11.5px; cursor: pointer; user-select: none; }
+  .drawer-body { flex: 1; overflow: auto; font-family: var(--mono); font-size: 11.5px; padding: 6px 14px; }
+  .log-row { padding: 2px 0; white-space: pre-wrap; word-break: break-word; line-height: 1.55; }
+  .log-row .ts { color: var(--muted-2); margin-right: 8px; }
+  .log-row .lvl { display: inline-block; min-width: 52px; opacity: .75; font-weight: 600; margin-right: 6px; }
+  .log-row .trace { color: var(--accent); margin-right: 6px; }
+  .log-row .extra { color: var(--muted); }
+  .log-row.lvl-INFO .lvl     { color: var(--muted); }
+  .log-row.lvl-WARNING       { color: var(--warning); }
+  .log-row.lvl-ERROR         { color: var(--error); }
+  .log-row.lvl-DEBUG         { color: var(--muted-2); }
+  .drawer-toggle {
+    border: 0; background: transparent; color: var(--muted); font-size: 11.5px; cursor: pointer;
+    padding: 2px 8px; border-radius: 4px;
+  }
+  .drawer-toggle:hover { background: var(--surface-hi); color: var(--text); }
+
+  /* responsive tweaks for narrow screens */
+  @media (max-width: 1100px) {
+    .app { grid-template-columns: 200px 1fr 0; grid-template-areas: "topbar topbar topbar" "rail transcript transcript"; }
+    .live-col { display: none; }
+  }
 </style>
 </head>
 <body>
-<header>
-  <h1>Agent Dashboard <span id="hdr-mode" class="badge waiting" style="margin-left:8px"></span></h1>
-  <div class="conn" id="conn"><span class="dot"></span><span id="conn-text">SSE 未连接</span></div>
-</header>
-<div class="grid">
-  <!-- 左列：worker tab + 状态 + 操作 -->
-  <div class="col">
-    <div class="worker-tabs" id="worker-tabs">
-      <span class="small" style="padding:6px;color:var(--muted)">加载 worker 列表…</span>
-    </div>
-    <div class="worker-add-form" id="worker-add-form">
-      <span class="label">新增 worker:</span>
-      <button class="primary" onclick="createWorkers(1)">+1</button>
-      <button onclick="createWorkers(3)">+3</button>
-      <button onclick="createWorkers(5)">+5</button>
-      <button onclick="toggleAddForm(false)" style="margin-left:auto">收起</button>
-    </div>
-
-    <div class="panel">
-      <h2>Runtime <span class="small" id="active-worker-tag-1" style="margin-left:6px;color:var(--accent)"></span></h2>
-      <div class="body">
-        <div class="kv">
-          <div class="k">runtime.mode</div><div class="v" id="rt-mode">…</div>
-          <div class="k">backend</div><div class="v" id="rt-backend">…</div>
-          <div class="k">strategy</div><div class="v" id="rt-strategy">…</div>
-          <div class="k">image</div><div class="v" id="rt-image">—</div>
-          <div class="k">session</div><div class="v" id="rt-session">—</div>
-        </div>
-      </div>
-    </div>
-
-    <div class="panel">
-      <h2>Supervisor <span class="small" id="active-worker-tag-2" style="margin-left:6px;color:var(--accent)"></span></h2>
-      <div class="body">
-        <div class="kv">
-          <div class="k">mode</div><div class="v" id="sv-mode">—</div>
-          <div class="k">active</div><div class="v" id="sv-active">—</div>
-          <div class="k">trace_id</div><div class="v" id="sv-trace">—</div>
-          <div class="k">goal</div><div class="v" id="sv-goal">—</div>
-          <div class="k">elapsed</div><div class="v" id="sv-elapsed">—</div>
-        </div>
-      </div>
-    </div>
-
-    <div class="panel">
-      <h2>Tasks <span class="small" id="active-worker-tag-3" style="margin-left:6px;color:var(--accent)"></span></h2>
-      <div class="body">
-
-        <div class="action-group">
-          <h3>发送任务</h3>
-          <textarea id="goal" placeholder="例：打开手机设置应用"></textarea>
-          <button class="primary" onclick="submitTask()" style="width:100%;margin-top:6px">发送任务</button>
-        </div>
-
-        <div class="action-group">
-          <h3>按人设触发</h3>
-          <button class="primary" onclick="runPatrolOnce()" style="width:100%">按人设跑一次 patrol</button>
-        </div>
-
-        <div class="action-group">
-          <h3>任务控制</h3>
-          <div class="action-row">
-            <button class="danger" onclick="cancelTask()" style="flex:1">取消任务</button>
-            <button class="danger" onclick="releaseSession()" style="flex:1">释放 session</button>
-          </div>
-        </div>
-
-        <div id="submit-result" class="small" style="margin-top:8px"></div>
-      </div>
-    </div>
-
-    <div class="panel">
-      <h2>Modes <span class="small" id="active-worker-tag-4" style="margin-left:6px;color:var(--accent)"></span></h2>
-      <div class="body">
-
-        <div class="action-group">
-          <h3>Supervisor 模式</h3>
-          <div class="action-row">
-            <button onclick="setMode('debug')">debug</button>
-            <button onclick="setMode('waiting')">waiting</button>
-            <button onclick="patrol(true)">patrol on</button>
-            <button onclick="patrol(false)">patrol off</button>
-          </div>
-        </div>
-
-        <div class="action-group">
-          <h3>Runtime 切换</h3>
-          <div class="action-row">
-            <select id="rt-select" onchange="updateSwapButtonState()" style="flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:3px;padding:4px 6px;font-family:inherit;font-size:12px">
-              <option value="local_chrome">local_chrome</option>
-              <option value="cloudmobile">cloudmobile</option>
-              <option value="agentbay">agentbay</option>
-            </select>
-            <button id="swap-btn" onclick="swapRuntime()">切换</button>
-          </div>
-          <div class="small" id="swap-hint" style="margin-top:4px;color:var(--muted)">切 runtime 会释放当前 session，任务运行中拒绝</div>
-        </div>
-
-      </div>
-    </div>
-
+<div class="app">
+  <div class="topbar">
+    <span class="brand">agent<span class="dot">.</span></span>
+    <span class="ctx" id="ctx">
+      <span id="ctx-worker">—</span>
+      <span class="sep">/</span>
+      <span id="ctx-runtime" class="pill waiting" onclick="openCmd('runtime')" title="点击切换 runtime（local_chrome / cloudmobile / agentbay）" style="cursor:pointer">—</span>
+      <span id="ctx-mode" class="pill waiting" onclick="openCmd('supervisor')" title="点击切换 supervisor mode（debug / waiting / patrol）" style="cursor:pointer"><span class="dotm"></span>—</span>
+      <span class="sep" id="ctx-step-sep" style="display:none">/</span>
+      <span id="ctx-step" style="display:none"></span>
+    </span>
+    <span class="grow"></span>
+    <button class="drawer-toggle" onclick="toggleDrawer()">Logs</button>
+    <span class="conn" id="conn"><span class="bullet"></span><span id="conn-text">connecting…</span></span>
+    <span class="kbd" onclick="openCmd()" style="cursor:pointer" title="Command palette">⌘K</span>
   </div>
 
-  <!-- 右列：实时画面（sticky 吸顶，滚到日志时不被遮） -->
-  <div class="col col-right">
-    <div class="panel">
-      <h2 style="display:flex;align-items:center">
-        Live View
-        <span class="small" id="live-hint" style="margin-left:8px"></span>
-        <button class="back-to-grid" id="back-to-grid" onclick="setViewMode('grid')" style="display:none">← 返回网格</button>
-      </h2>
-      <div class="body" style="padding:0">
-        <!-- 单视图：当前 active worker 的 iframe / img -->
-        <div class="liveview" id="liveview">
-          <div class="placeholder">等待 runtime 信息…<br><br><span style="opacity:.6">云端 session 建立后，用真机扫码登录小红书再发任务</span></div>
+  <aside class="rail">
+    <div class="rail-head">
+      <span class="h">Workers</span>
+      <button class="add" onclick="openAddWorkerModal()" title="Add worker">+</button>
+    </div>
+    <div id="worker-list"></div>
+  </aside>
+
+  <main class="transcript-col">
+    <div class="transcript-scroll">
+      <div class="transcript" id="transcript">
+        <div class="empty-state">
+          <div>无活跃 trace。</div>
+          <div class="hint">敲一个目标或按 <span class="kbd">⌘K</span> 打开命令面板</div>
         </div>
-        <!-- 网格视图：所有 worker 的 iframe 并排（display:none，切到 grid 时打开） -->
-        <div class="liveview-grid" id="liveview-grid"></div>
       </div>
     </div>
+    <div class="compose">
+      <div class="compose-inner">
+        <div class="compose-box">
+          <textarea id="goal-input" rows="1" placeholder="输入目标，⌘Enter 发送" oninput="autoGrow(this)"></textarea>
+          <button class="send" id="send-btn" onclick="submitTask()">发送</button>
+        </div>
+        <div class="hint">
+          <span class="compose-target" id="compose-target" onclick="openCmd('runtime')" title="点击切 runtime" style="cursor:pointer">
+            <span class="compose-target-arrow">→</span>
+            <span id="compose-target-name">—</span>
+            <span class="compose-target-mode" id="compose-target-mode">—</span>
+          </span>
+          <span class="sep" style="color:var(--muted-2)">·</span>
+          <span><span class="kbd">⌘Enter</span> 发送</span>
+          <span><span class="kbd">⌘K</span> 命令</span>
+          <span id="cancel-wrapper" style="display:none">·
+            <button class="cancel-btn" onclick="cancelTask()">取消当前任务</button>
+          </span>
+          <span class="grow" style="flex:1"></span>
+          <span class="compose-result" id="compose-result"></span>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <aside class="live-col">
+    <div class="live-head">
+      <span>Live</span>
+      <span class="status" id="live-status">—</span>
+    </div>
+    <div class="live-body" id="live-body">
+      <div class="ph">选择 worker</div>
+    </div>
+    <div class="live-foot">
+      <span id="live-foot-info">—</span>
+      <span style="flex:1"></span>
+      <button class="muted-icon" onclick="doRefreshLiveUrl()" title="刷新串流 URL">↻</button>
+    </div>
+  </aside>
+</div>
+
+<!-- command palette -->
+<div class="cmd-backdrop" id="cmd-backdrop" onclick="closeCmd(event)">
+  <div class="cmd" onclick="event.stopPropagation()">
+    <input id="cmd-input" placeholder="输入命令…" autocomplete="off">
+    <div class="cmd-results" id="cmd-results"></div>
   </div>
 </div>
 
-<!-- Logs：全宽，位于左右两栏整体的下方；内部 420px 滚动 -->
-<div class="panel logs-panel" style="margin:12px">
-  <h2>Logs <span class="small" id="log-stats" style="margin-left:8px">0 行</span></h2>
-  <div class="body" style="padding:0">
-    <div class="log-toolbar">
-      <input type="text" id="log-filter" placeholder="过滤：trace_id 片段 / 关键词…">
-      <label><input type="checkbox" id="log-info" checked>INFO</label>
-      <label><input type="checkbox" id="log-warning" checked>WARN</label>
-      <label><input type="checkbox" id="log-error" checked>ERROR</label>
-      <label><input type="checkbox" id="log-autoscroll" checked>滚到底</label>
-      <button onclick="clearLogs()" style="padding:3px 10px">清空</button>
-    </div>
-    <div class="logs" id="logs"></div>
+<!-- prompt modal（prompt/confirm 的轻量替代） -->
+<div class="modal-backdrop" id="modal-backdrop" onclick="closeModal(event)">
+  <div class="modal" id="modal" onclick="event.stopPropagation()"></div>
+</div>
+
+<!-- logs drawer -->
+<div class="drawer" id="drawer">
+  <div class="drawer-head">
+    <span class="h">Logs</span>
+    <input type="text" id="log-filter" placeholder="trace_id / 关键词">
+    <label><input type="checkbox" id="log-debug">DEBUG</label>
+    <label><input type="checkbox" id="log-info" checked>INFO</label>
+    <label><input type="checkbox" id="log-warning" checked>WARN</label>
+    <label><input type="checkbox" id="log-error" checked>ERROR</label>
+    <label><input type="checkbox" id="log-auto" checked>滚到底</label>
+    <span id="log-stats" style="color:var(--muted);font-size:11px">0 行</span>
+    <button class="drawer-toggle" onclick="clearLogs()">清空</button>
+    <button class="drawer-toggle" onclick="toggleDrawer(false)">关闭</button>
   </div>
+  <div class="drawer-body" id="log-body"></div>
 </div>
 
 <script>
 'use strict';
-const els = {
-  hdrMode: document.getElementById('hdr-mode'),
-  conn: document.getElementById('conn'),
-  connText: document.getElementById('conn-text'),
-  rtMode: document.getElementById('rt-mode'),
-  rtBackend: document.getElementById('rt-backend'),
-  rtStrategy: document.getElementById('rt-strategy'),
-  rtImage: document.getElementById('rt-image'),
-  rtSession: document.getElementById('rt-session'),
-  svMode: document.getElementById('sv-mode'),
-  svActive: document.getElementById('sv-active'),
-  svTrace: document.getElementById('sv-trace'),
-  svGoal: document.getElementById('sv-goal'),
-  svElapsed: document.getElementById('sv-elapsed'),
-  liveview: document.getElementById('liveview'),
-  liveHint: document.getElementById('live-hint'),
-  submitResult: document.getElementById('submit-result'),
-  logs: document.getElementById('logs'),
-  logStats: document.getElementById('log-stats'),
-  logFilter: document.getElementById('log-filter'),
-  logInfo: document.getElementById('log-info'),
-  logWarn: document.getElementById('log-warning'),
-  logError: document.getElementById('log-error'),
-  logAuto: document.getElementById('log-autoscroll'),
+
+/* ═══════════════════ 状态 ═══════════════════ */
+
+let BRAIN_URL = '';
+const state = {
+  workers: [],
+  activeId: null,
+  runtime: null,       // /agent/runtime 最新返回
+  status: null,        // /agent/status  最新返回
+  transcripts: new Map(),   // account_id -> { traceId, goal, startedAt, bubbles: [], stepMap }
+  traceToAccount: new Map(),// trace_id -> account_id（用于路由 subtask/vision 等无 account_id 的事件）
+  freshIds: new Set(),
+  pendingWorkers: new Set(),
+  // Live view LRU cache：最多同时保留 LIVE_CACHE_MAX 个云手机 iframe（隐藏 display:none），
+  // 命中就 O(1) 切显示，miss 才重建（3-8s 冷启动）。切 worker 切出的老 iframe 不销毁，
+  // 视频流继续挂着，切回即刻可见。超出容量按 lastActive 淘汰最老的。
+  liveCache: new Map(),  // accountId -> {iframe, url, urlSetAt, lastActive}
+  liveActive: null,      // 'iframe' | 'img' | 'placeholder' | null
+  liveImg: null,         // 当前 local_chrome 的 <img> 节点
+  imgTimer: null,
+  fastPollTimer: null,
+  rtSelectInitialized: false,
 };
 
-// Log buffer：保留最近 N 条原始记录，filter 变化时整体重渲染
+const LIVE_CACHE_MAX = 4;
+const LIVE_URL_STALE_MS = 25 * 60 * 1000;  // authcode 30min，留 5min 余量
+
 const LOG_MAX = 800;
-let logBuffer = [];
+const logBuffer = [];
 
-function appendLog(payload, ts) {
-  logBuffer.push({payload, ts});
-  if (logBuffer.length > LOG_MAX) logBuffer.splice(0, logBuffer.length - LOG_MAX);
-  const row = renderLogRow(payload, ts);
-  if (row && passesFilter(payload)) {
-    els.logs.appendChild(row);
-    while (els.logs.children.length > LOG_MAX) els.logs.removeChild(els.logs.firstChild);
-    if (els.logAuto.checked) els.logs.scrollTop = els.logs.scrollHeight;
+/* ═══════════════════ API 辅助 ═══════════════════ */
+
+const brainApi   = p => (BRAIN_URL || '') + p;
+const sessionApi = p => p;
+const accountQs  = id => id ? '?account_id=' + encodeURIComponent(id) : '';
+const withAccount = (id, extra={}) => id ? { ...extra, account_id: id } : extra;
+
+async function apiGet(path, id) {
+  const r = await fetch(brainApi(path) + accountQs(id));
+  if (!r.ok) throw new Error(r.status);
+  return r.json();
+}
+async function apiPost(path, id, extra={}, target='brain') {
+  const base = target === 'session' ? sessionApi(path) : brainApi(path);
+  const r = await fetch(base, {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(withAccount(id, extra)),
+  });
+  return r;
+}
+
+/* ═══════════════════ 工具 ═══════════════════ */
+
+function escapeHtml(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function formatTs(ts){const t=new Date((ts||Date.now()/1000)*1000);const pad=n=>String(n).padStart(2,'0');return pad(t.getHours())+':'+pad(t.getMinutes())+':'+pad(t.getSeconds());}
+function shortTrace(t){return t?String(t).slice(0,8):'—';}
+function hashColor(s){let h=0;for(const c of String(s)) h=(h*31+c.charCodeAt(0))|0;const hue=((h%360)+360)%360;return `hsl(${hue} 52% 55%)`;}
+function initials(s){const parts=String(s||'?').replace(/[-_]/g,' ').split(/\s+/).filter(Boolean);if(!parts.length) return '?';if(parts.length===1) return parts[0].slice(0,2).toUpperCase();return (parts[0][0]+parts[parts.length-1][0]).toUpperCase();}
+function autoGrow(el){el.style.height='auto';el.style.height=Math.min(el.scrollHeight,140)+'px';}
+function scrolledToBottom(el){return el.scrollHeight - el.scrollTop - el.clientHeight < 64;}
+
+/* ═══════════════════ Transcript 组装 ═══════════════════ */
+
+/**
+ * 每个 bubble 一行：{id, kind, ts, title, detail}
+ * kind: task | plan | subtask | step | recipe | finish | error | note
+ */
+function ensureTranscript(id) {
+  if (!state.transcripts.has(id)) {
+    state.transcripts.set(id, { traceId: null, goal: null, startedAt: null, bubbles: [], stepMap: new Map() });
   }
-  els.logStats.textContent = logBuffer.length + ' 行';
+  return state.transcripts.get(id);
 }
 
-function passesFilter(payload) {
-  const lvl = payload.level || 'INFO';
-  if (lvl === 'INFO' && !els.logInfo.checked) return false;
-  if (lvl === 'WARNING' && !els.logWarn.checked) return false;
-  if (lvl === 'ERROR' && !els.logError.checked) return false;
-  const q = els.logFilter.value.trim().toLowerCase();
-  if (!q) return true;
-  return JSON.stringify(payload).toLowerCase().includes(q);
+function pushBubble(accountId, bubble) {
+  const t = ensureTranscript(accountId);
+  bubble.id = bubble.id || ('b' + (++_bubbleSeq));
+  t.bubbles.push(bubble);
+  // 裁剪
+  if (t.bubbles.length > 400) t.bubbles.splice(0, t.bubbles.length - 400);
+  state.freshIds.add(bubble.id);
+  if (accountId === (state.activeId || 'default')) renderTranscript();
 }
 
-function renderLogRow(payload, ts) {
-  const t = new Date((ts || Date.now() / 1000) * 1000);
-  const hh = String(t.getHours()).padStart(2, '0');
-  const mm = String(t.getMinutes()).padStart(2, '0');
-  const ss = String(t.getSeconds()).padStart(2, '0');
-  const lvl = payload.level || 'INFO';
-  const trace = payload.trace_id;
-  const msg = payload.msg || payload.message || '';
-  // 把除 level/logger/trace_id/msg/message 之外的字段铺开成 key=value
-  const extras = [];
-  for (const k of Object.keys(payload)) {
-    if (['level', 'logger', 'trace_id', 'msg', 'message'].includes(k)) continue;
-    let v = payload[k];
-    if (typeof v === 'object') v = JSON.stringify(v);
-    extras.push(k + '=' + v);
+let _bubbleSeq = 0;
+
+function resetTranscriptFor(id) {
+  state.transcripts.set(id, { traceId: null, goal: null, startedAt: null, bubbles: [], stepMap: new Map() });
+  if (id === (state.activeId || 'default')) renderTranscript();
+}
+
+/** 把单条 log 事件喂给 transcript */
+function onLogEvent(payload, ts) {
+  const ev = payload.event;
+  const traceId = payload.trace_id || '';
+  // 路由：task.* 自带 account_id；其它事件用 trace_id → account_id 映射兜底
+  const accountId = payload.account_id
+    || (traceId && state.traceToAccount.get(traceId))
+    || state.activeId || 'default';
+  const t = ensureTranscript(accountId);
+
+  if (ev === 'task.started') {
+    if (traceId) state.traceToAccount.set(traceId, accountId);
+    // 新 trace → 重置这个 worker 的 transcript
+    state.transcripts.set(accountId, {
+      traceId: traceId, goal: payload.goal || '', startedAt: ts || Date.now()/1000,
+      bubbles: [], stepMap: new Map(),
+    });
+    pushBubble(accountId, {
+      kind: 'task', ts, title: '任务开始', detail: payload.goal || '',
+      extras: payload.kind ? { kind: payload.kind } : null,
+    });
+    return;
   }
-  const row = document.createElement('div');
-  row.className = 'row lvl-' + lvl;
-  row.innerHTML =
-    '<span class="ts">' + hh + ':' + mm + ':' + ss + '</span>' +
-    '<span class="lvl">' + lvl + '</span>' +
-    (trace ? '<span class="trace">[' + escapeHtml(String(trace).slice(0, 8)) + ']</span>' : '') +
-    '<span>' + escapeHtml(msg) + '</span>' +
-    (extras.length ? ' <span class="extra">| ' + escapeHtml(extras.join(' ')) + '</span>' : '');
-  return row;
-}
-
-function rerenderLogs() {
-  els.logs.innerHTML = '';
-  for (const r of logBuffer) {
-    if (passesFilter(r.payload)) {
-      els.logs.appendChild(renderLogRow(r.payload, r.ts));
-    }
+  if (ev === 'task.completed') {
+    pushBubble(accountId, { kind: 'finish', ts, title: '任务完成', detail: payload.summary || payload.msg || '' });
+    if (traceId) state.traceToAccount.delete(traceId);
+    return;
   }
-  if (els.logAuto.checked) els.logs.scrollTop = els.logs.scrollHeight;
-}
-
-function clearLogs() {
-  logBuffer = [];
-  els.logs.innerHTML = '';
-  els.logStats.textContent = '0 行';
-}
-
-
-// ── 双服务路由 ──────────────────────────────────────────
-// BRAIN_URL 非空 = 拆分模式（Session Service 在当前 origin，Brain 在另一个端口）
-// 为空 = 单进程模式（所有 API 走当前 origin，向后兼容）
-let BRAIN_URL = '';
-
-// 发往 Brain Service 的 API 路径前缀（任务、状态、supervisor 控制）
-function brainApi(path) { return (BRAIN_URL || '') + path; }
-// 发往 Session Service 的 API 路径前缀（session、截图、live-url）
-function sessionApi(path) { return path; }
-
-let runtimeMode = null;       // local_chrome / cloudmobile / agentbay
-let liveViewMounted = null;   // 'iframe' | 'img' | null
-let imgRefreshTimer = null;
-// 发了任务但 session 还没建好的 worker 集合；用来在 live view 区显示"session 创建中…"占位
-const pendingWorkers = new Set();
-let fastPollTimer = null;
-
-function markPending(accountId) {
-  if (!accountId) return;
-  pendingWorkers.add(accountId);
-  // 立即渲染占位（不等 refreshRuntime 异步返回，避免 liveViewMounted 状态错位）
-  if (viewMode === 'single' && accountId === (activeAccountId || 'default')) {
-    const lv = document.getElementById('liveview');
-    if (lv) {
-      lv.innerHTML = '<div class="placeholder pending"><span class="dot-load"></span>session 创建中…<br><br><span style="opacity:.6">云手机实例启动通常需要 3-10 秒</span></div>';
-      els.liveHint.textContent = (runtimeMode || '') + '：session 创建中';
-      liveViewMounted = 'pending';
-    }
-  } else if (viewMode === 'grid') {
-    renderLiveGrid();
+  if (ev === 'task.failed') {
+    pushBubble(accountId, { kind: 'error', ts, title: '任务失败', detail: payload.error || payload.msg || '' });
+    if (traceId) state.traceToAccount.delete(traceId);
+    return;
   }
-  if (fastPollTimer) return;  // 已经在快速轮询
-  let ticks = 0;
-  fastPollTimer = setInterval(async () => {
-    ticks++;
-    await refreshWorkers();
-    // 查所有 pending 是否已拿到 URL
-    for (const id of Array.from(pendingWorkers)) {
-      const w = workersCache.find(x => x.account_id === id);
-      if (w && w.agentbay && w.agentbay.live_view_url) pendingWorkers.delete(id);
-    }
-    // 所有 pending 就位 / 最多 30s 放弃（失败场景不无限轮）
-    if (pendingWorkers.size === 0 || ticks >= 15) {
-      clearInterval(fastPollTimer);
-      fastPollTimer = null;
-    }
-  }, 2000);
-}
-// 当前激活 worker：所有面板/动作都对它生效。null = 后端 default。
-let activeAccountId = null;
-let workersCache = [];        // 最新一次 /agent/workers 结果
-// Live View 视图模式：'single' / 'grid'
-// 多 worker 时默认 grid；双击某 cell 进 single；点 "← 返回网格" 出 single
-let viewMode = 'init';  // 首次加载由 applyAutoViewMode 根据 worker 数量决定
-let gridMountedSig = '';      // 网格上次挂载的签名（worker URL 集合 hash），变了才重建
-
-// 工具：往所有 fetch 的 query/body 里注入 account_id（仅当 activeAccountId 非空）
-function withAccount(obj) {
-  if (!activeAccountId) return obj;
-  return {...(obj || {}), account_id: activeAccountId};
-}
-function accountQs() {
-  return activeAccountId ? '?account_id=' + encodeURIComponent(activeAccountId) : '';
-}
-
-let rtSelectInitialized = false;
-
-function updateSwapButtonState() {
-  const sel = document.getElementById('rt-select');
-  const btn = document.getElementById('swap-btn');
-  const hint = document.getElementById('swap-hint');
-  const rtMode = document.getElementById('rt-mode');
-  if (!sel || !btn || !runtimeMode) return;
-  const diverged = sel.value !== runtimeMode;
-  if (diverged) {
-    btn.textContent = '切换 →';
-    btn.style.background = 'var(--yellow)';
-    btn.style.borderColor = 'var(--yellow)';
-    btn.style.color = '#1b1500';
-    if (hint) { hint.innerHTML = '⚠️ dropdown 和当前 mode 不一致，<b>点 [切换] 才生效</b>'; hint.style.color = 'var(--yellow)'; }
-    if (rtMode) rtMode.style.fontWeight = '700';
-  } else {
-    btn.textContent = '切换';
-    btn.style.background = '';
-    btn.style.borderColor = '';
-    btn.style.color = '';
-    if (hint) { hint.innerHTML = '切 runtime 会释放当前 session，任务运行中拒绝'; hint.style.color = 'var(--muted)'; }
-    if (rtMode) rtMode.style.fontWeight = '';
+  if (ev === 'task.preempted') {
+    pushBubble(accountId, { kind: 'note', ts, title: '任务被抢占', detail: payload.reason || '' });
+    return;
   }
-}
-
-async function refreshRuntime() {
-  try {
-    const r = await fetch(brainApi('/api/v1/agent/runtime') + accountQs());
-    if (!r.ok) throw new Error(r.status);
-    const d = await r.json();
-    runtimeMode = d.mode;
-    els.rtMode.textContent = d.mode;
-    els.rtBackend.textContent = d.backend;
-    els.rtStrategy.textContent = d.strategy.type + ' (' + d.strategy.name + ')';
-    // 只在首次挂载时把下拉框同步到当前 worker 的 mode；之后保留用户的选择，
-    // 切 worker / 周期刷新都不改动它，避免误操作（用户看到的是自己的上次选择）。
-    // 差异由 updateSwapButtonState 在视觉上标红警告。
-    const sel = document.getElementById('rt-select');
-    if (sel && !rtSelectInitialized && d.mode) {
-      sel.value = d.mode;
-      rtSelectInitialized = true;
-    }
-    updateSwapButtonState();
-    if (d.agentbay) {
-      els.rtImage.textContent = d.agentbay.image_id + ' [' + d.agentbay.screenshot_format + ']';
-      els.rtSession.textContent = d.agentbay.session_active
-        ? '✅ active ' + (d.agentbay.screen_size.width || '?') + 'x' + (d.agentbay.screen_size.height || '?')
-        : '⚪️ 未建立';
+  if (ev === 'plan.generated') {
+    pushBubble(accountId, {
+      kind: 'plan', ts, title: `计划 · ${payload.subtask_count ?? '?'} 个子任务`,
+      subtasks: payload.subtasks || [],
+    });
+    return;
+  }
+  if (ev === 'plan.failed') {
+    pushBubble(accountId, { kind: 'error', ts, title: '计划失败', detail: payload.error || '' });
+    return;
+  }
+  if (ev === 'subtask.started') {
+    pushBubble(accountId, {
+      kind: 'subtask', ts,
+      title: `子任务 ${payload.index ?? '?'}/${payload.total ?? '?'}`,
+      detail: payload.sub_goal || '', skill: payload.skill, intent: payload.intent,
+    });
+    return;
+  }
+  if (ev === 'subtask.completed') {
+    pushBubble(accountId, { kind: 'finish', ts, title: '子任务完成', detail: payload.sub_goal || '' });
+    return;
+  }
+  if (ev === 'subtask.failed') {
+    pushBubble(accountId, { kind: 'error', ts, title: '子任务失败', detail: payload.error || payload.sub_goal || '' });
+    return;
+  }
+  if (ev === 'recipe.hit') {
+    pushBubble(accountId, { kind: 'recipe', ts, title: `Recipe 命中 ${payload.recipe_id || ''}`,
+      detail: `intent=${payload.intent || '—'} page=${payload.page_state || '—'}${payload.trial ? ' · trial' : ''}` });
+    return;
+  }
+  if (ev === 'vision.observed') {
+    // 每步只开一个 step bubble；后续 vision.decided 往同一 bubble 填 thought/actions
+    const key = `${traceId}#${payload.step}`;
+    const existing = t.stepMap.get(key);
+    const meta = `page=${payload.page_state || 'unknown'}${payload.confidence != null ? ` · ${payload.confidence}` : ''}`;
+    if (existing) { existing.meta = meta; renderTranscript(); return; }
+    const bub = { kind: 'step', ts, title: `Step ${payload.step}`, meta };
+    bub.id = 'b' + (++_bubbleSeq);
+    t.stepMap.set(key, bub);
+    t.bubbles.push(bub);
+    state.freshIds.add(bub.id);
+    if (accountId === (state.activeId || 'default')) renderTranscript();
+    return;
+  }
+  if (ev === 'vision.decided') {
+    const key = `${traceId}#${payload.step}`;
+    const bub = t.stepMap.get(key);
+    const thought = payload.thought || '';
+    const actions = payload.actions || [];
+    if (bub) {
+      bub.thought = thought; bub.actions = actions;
+      state.freshIds.add(bub.id);
+      renderTranscript();
     } else {
-      els.rtImage.textContent = '(本地)';
-      els.rtSession.textContent = 'n/a';
-    }
-    mountLiveView(d);
-  } catch (e) {
-    console.error('refreshRuntime fail', e);
-  }
-}
-
-function mountLiveView(rt) {
-  // 网格模式下不挂单视图 iframe，避免和 grid cell iframe 同连一个 session → 2002 冲突
-  if (viewMode === 'grid') {
-    if (imgRefreshTimer) { clearInterval(imgRefreshTimer); imgRefreshTimer = null; }
-    // 清掉可能残留的隐藏 iframe
-    if (liveViewMounted === 'iframe' || liveViewMounted === 'img') {
-      els.liveview.innerHTML = '';
-      els.liveview.dataset.key = '';
-      liveViewMounted = null;
+      // 极少数情况下 decided 比 observed 先到
+      pushBubble(accountId, { kind: 'step', ts, title: `Step ${payload.step}`, thought, actions });
     }
     return;
   }
-  const key = (rt.mode === 'local_chrome' ? 'img' : 'iframe') + '|' + (activeAccountId || 'default');
-  if (rt.mode === 'local_chrome') {
-    if (els.liveview.dataset.key !== key) {
-      els.liveview.innerHTML = '<img id="screenimg" alt="loading screen…">';
-      els.liveHint.textContent = '本地 Chrome 截图（每 2s 刷新）';
-      els.liveview.dataset.key = key;
-      liveViewMounted = 'img';
-      if (imgRefreshTimer) clearInterval(imgRefreshTimer);
-      const refresh = () => {
-        const img = document.getElementById('screenimg');
-        if (img) img.src = '/api/v1/agent/screen.jpg' + accountQs() + (accountQs() ? '&' : '?') + 't=' + Date.now();
-      };
-      refresh();
-      imgRefreshTimer = setInterval(refresh, 2000);
-    }
-  } else {
-    // 云端：iframe 嵌 live_view_url
-    const url = rt.agentbay && rt.agentbay.live_view_url;
-    const sessionActive = rt.agentbay && rt.agentbay.session_active;
-    if (!url) {
-      const isPending = pendingWorkers.has(rt.account_id || activeAccountId);
-      const phKey = isPending ? 'pending' : (sessionActive ? 'url_expired' : 'placeholder');
-      if (liveViewMounted !== phKey) {
-        if (isPending) {
-          els.liveview.innerHTML = '<div class="placeholder pending"><span class="dot-load"></span>session 创建中…<br><br><span style="opacity:.6">云手机实例启动通常需要 3-10 秒</span></div>';
-          els.liveHint.textContent = rt.mode + '：session 创建中';
-        } else if (sessionActive) {
-          els.liveview.innerHTML = '<div class="placeholder">串流地址已过期<br><br><button onclick="doRefreshLiveUrl()" style="padding:6px 18px;border:none;border-radius:4px;background:#1677ff;color:#fff;cursor:pointer;font-size:14px">刷新连接</button></div>';
-          els.liveHint.textContent = rt.mode + '：串流 URL 过期，点击刷新';
-        } else {
-          els.liveview.innerHTML = '<div class="placeholder">云端 session 未建立。先发一个任务即可看到云手机屏幕。</div>';
-          els.liveHint.textContent = rt.mode + '：等待 session';
-        }
-        liveViewMounted = phKey;
-      }
-    } else {
-      const wantKey = key + '|' + url;
-      if (els.liveview.dataset.key !== wantKey) {
-        els.liveview.innerHTML = '<iframe src="' + url + '" allow="clipboard-read; clipboard-write"></iframe>';
-        els.liveview.dataset.key = wantKey;
-        els.liveHint.textContent = rt.mode + '：阿里 Web 串流（含 authcode，30 分钟时效）';
-        liveViewMounted = 'iframe';
-      }
-    }
-    if (imgRefreshTimer) { clearInterval(imgRefreshTimer); imgRefreshTimer = null; }
+  if (ev === 'vision.finished') {
+    pushBubble(accountId, { kind: 'finish', ts, title: `完成 step ${payload.step}`, detail: payload.summary || '' });
+    return;
   }
+  if (ev === 'action.tool.failed' || ev === 'action.atomic.failed') {
+    pushBubble(accountId, { kind: 'error', ts, title: '动作失败', detail: payload.error || payload.message || '' , extras: payload });
+    return;
+  }
+  if (ev === 'strategy.delegated') {
+    pushBubble(accountId, { kind: 'note', ts, title: '委托远端 Agent', detail: payload.goal || '' });
+    return;
+  }
+  if (ev === 'strategy.returned') {
+    pushBubble(accountId, { kind: 'finish', ts, title: '远端 Agent 返回', detail: payload.summary || '' });
+    return;
+  }
+  // 其它事件不入 transcript（保留给 logs drawer）
+}
+
+/* ═══════════════════ 渲染：topbar + workers + transcript + live ═══════════════════ */
+
+function renderTopbar() {
+  const w = state.workers.find(x => x.account_id === state.activeId) || state.workers[0];
+  const mode = (w && w.supervisor && w.supervisor.mode) || 'waiting';
+  const name = w ? (w.display_name || w.account_id) : '—';
+  document.getElementById('ctx-worker').textContent = name;
+  const ctxMode = document.getElementById('ctx-mode');
+  ctxMode.className = 'pill ' + mode;
+  ctxMode.setAttribute('onclick', "openCmd('supervisor')");
+  ctxMode.innerHTML = `<span class="dotm"></span>${mode}`;
+  const ctxRuntime = document.getElementById('ctx-runtime');
+  const rtMode = (state.runtime && state.runtime.mode) || '—';
+  ctxRuntime.className = 'pill waiting';
+  ctxRuntime.textContent = rtMode;
+  // compose-box 旁的运行目标指示：避免用户只看输入框不知道在哪个 runtime 上跑
+  document.getElementById('compose-target-name').textContent = name;
+  const cmode = document.getElementById('compose-target-mode');
+  cmode.className = 'compose-target-mode ' + (rtMode !== '—' ? rtMode : '');
+  cmode.textContent = rtMode;
+  // 步数 / elapsed
+  const st = state.status;
+  if (st && st.is_active) {
+    document.getElementById('ctx-step-sep').style.display = '';
+    const step = document.getElementById('ctx-step');
+    step.style.display = '';
+    step.textContent = `${st.running_seconds}s`;
+    document.getElementById('cancel-wrapper').style.display = '';
+  } else {
+    document.getElementById('ctx-step-sep').style.display = 'none';
+    document.getElementById('ctx-step').style.display = 'none';
+    document.getElementById('cancel-wrapper').style.display = 'none';
+  }
+}
+
+function renderWorkers() {
+  const host = document.getElementById('worker-list');
+  host.innerHTML = '';
+  if (!state.workers.length) {
+    host.innerHTML = '<div style="padding:12px;color:var(--muted);font-size:11.5px">无 worker</div>';
+    return;
+  }
+  for (const w of state.workers) {
+    const row = document.createElement('div');
+    const isActive = w.account_id === state.activeId;
+    const sv = (w.supervisor && w.supervisor.mode) || 'waiting';
+    row.className = 'worker' + (isActive ? ' active' : '');
+    const name = w.display_name || w.account_id;
+    const sub = w.supervisor && w.supervisor.is_active
+      ? `${sv} · ${w.supervisor.running_seconds}s`
+      : sv;
+    const showX = state.workers.length > 1;
+    row.innerHTML = `
+      <span class="avatar" style="background:${hashColor(w.account_id)}">${escapeHtml(initials(name))}</span>
+      <span class="meta">
+        <div class="name">${escapeHtml(name)}</div>
+        <div class="sub"><span class="status-dot ${sv}"></span> ${escapeHtml(sub)}</div>
+      </span>
+      ${showX ? '<button class="x" title="移除">×</button>' : ''}
+    `;
+    row.onclick = (e) => {
+      if (e.target.classList && e.target.classList.contains('x')) {
+        e.stopPropagation(); return removeWorker(w.account_id);
+      }
+      switchWorker(w.account_id);
+    };
+    host.appendChild(row);
+  }
+}
+
+function renderTranscript() {
+  const host = document.getElementById('transcript');
+  const scroller = host.parentElement;
+  const t = ensureTranscript(state.activeId || 'default');
+  const atBottom = scrolledToBottom(scroller);
+  const prevTop = scroller.scrollTop;
+  host.innerHTML = '';
+
+  // Goal card
+  const goalCard = document.createElement('div');
+  goalCard.className = 'goal-card' + (t.goal ? '' : ' idle');
+  const st = state.status;
+  const metaBits = [];
+  if (t.traceId) metaBits.push(`trace=<span style="color:var(--text);font-family:var(--mono)">${escapeHtml(shortTrace(t.traceId))}</span>`);
+  if (st && st.is_active) metaBits.push(`⏱ ${st.running_seconds}s`);
+  else if (t.startedAt) metaBits.push(`⏱ 空闲`);
+  goalCard.innerHTML = `
+    <div class="goal-label">当前目标</div>
+    <div class="goal">${t.goal ? escapeHtml(t.goal) : '（空闲中）'}</div>
+    ${metaBits.length ? `<div class="meta">${metaBits.join('<span style="color:var(--muted-2)">·</span>')}</div>` : ''}
+  `;
+  host.appendChild(goalCard);
+
+  if (!t.bubbles.length) {
+    const empty = document.createElement('div');
+    empty.className = 'empty-state';
+    empty.innerHTML = `<div>还没有事件</div><div class="hint">发送一个任务，这里会实时打印 plan → subtask → step</div>`;
+    host.appendChild(empty);
+    return;
+  }
+
+  const bubbles = document.createElement('div');
+  bubbles.className = 'bubbles';
+  for (const b of t.bubbles) bubbles.appendChild(renderBubble(b));
+  host.appendChild(bubbles);
+
+  // 滚动位置：用户在底部 → 跟随新内容；否则保持原位（SSE 增量也不打断阅读）
+  scroller.scrollTop = atBottom ? scroller.scrollHeight : prevTop;
+  // fresh 退色（下一帧加 .calm）
+  requestAnimationFrame(() => {
+    host.querySelectorAll('.bubble.fresh').forEach(n => n.classList.add('calm'));
+    setTimeout(() => state.freshIds.clear(), 1600);
+  });
+}
+
+const ICONS = { task:'◎', plan:'≡', subtask:'›', step:'·', recipe:'◆', finish:'✓', error:'✕', note:'i' };
+
+function renderBubble(b) {
+  const el = document.createElement('div');
+  el.className = 'bubble ' + b.kind + (state.freshIds.has(b.id) ? ' fresh' : '');
+  const title = escapeHtml(b.title || '');
+  let content = '';
+  if (b.kind === 'plan' && b.subtasks && b.subtasks.length) {
+    content = '<div class="content">' + b.subtasks.map((s, i) =>
+      `<div style="padding:4px 0;display:flex;gap:8px"><span style="color:var(--muted);font-family:var(--mono)">${i+1}.</span><span>${escapeHtml(s.goal || '')}</span>${s.skill ? `<span class="chip" style="margin-left:auto">${escapeHtml(s.skill)}</span>` : ''}</div>`
+    ).join('') + '</div>';
+  } else if (b.kind === 'step') {
+    const parts = [];
+    if (b.meta) parts.push(`<div class="kv">${escapeHtml(b.meta)}</div>`);
+    if (b.thought) parts.push(`<div class="content thought">${escapeHtml(b.thought)}</div>`);
+    if (b.actions && b.actions.length) {
+      parts.push('<div class="actions">' + b.actions.map(a => `<span class="chip">${escapeHtml(typeof a === 'string' ? a : (a.method ? `${a.method}(${JSON.stringify(a.params||{}).slice(1,-1)})` : JSON.stringify(a)))}</span>`).join('') + '</div>');
+    }
+    content = parts.join('');
+  } else if (b.kind === 'subtask') {
+    const bits = [];
+    if (b.detail) bits.push(`<div class="content">${escapeHtml(b.detail)}</div>`);
+    const chips = [];
+    if (b.intent) chips.push(`<span class="chip">intent=${escapeHtml(b.intent)}</span>`);
+    if (b.skill) chips.push(`<span class="chip">skill=${escapeHtml(b.skill)}</span>`);
+    if (chips.length) bits.push(`<div class="actions">${chips.join('')}</div>`);
+    content = bits.join('');
+  } else {
+    if (b.detail) content = `<div class="content">${escapeHtml(b.detail)}</div>`;
+  }
+  if (b.extras) {
+    content += `<details><summary>raw</summary><pre>${escapeHtml(JSON.stringify(b.extras, null, 2))}</pre></details>`;
+  }
+  el.innerHTML = `
+    <span class="icon">${ICONS[b.kind] || '·'}</span>
+    <div class="body">
+      <div class="head"><b>${title}</b><span class="ts">${formatTs(b.ts)}</span></div>
+      ${content}
+    </div>
+  `;
+  return el;
+}
+
+function renderLive() {
+  const body = document.getElementById('live-body');
+  const status = document.getElementById('live-status');
+  const foot = document.getElementById('live-foot-info');
+  const rt = state.runtime;
+
+  if (!rt) {
+    _hideAllCachedIframes();
+    _clearImgMount();
+    _setPlaceholder(body, '<div class="ph">等待 runtime…</div>');
+    state.liveActive = 'placeholder';
+    status.textContent = ''; foot.textContent = '—';
+    return;
+  }
+
+  const accountId = state.activeId || 'default';
+  const isPending = state.pendingWorkers.has(accountId);
+  status.textContent = rt.mode;
+
+  if (rt.mode === 'local_chrome') {
+    _hideAllCachedIframes();
+    _removePlaceholder(body);
+    _mountImg(body, accountId);
+    foot.textContent = '本地 Chrome · 每 2s 刷新';
+    return;
+  }
+
+  // cloud / agentbay
+  _clearImgMount();
+  const url = rt.agentbay && rt.agentbay.live_view_url;
+  const sessionActive = rt.agentbay && rt.agentbay.session_active;
+
+  if (!url) {
+    _hideAllCachedIframes();
+    const phKey = isPending ? 'pending' : (sessionActive ? 'expired' : 'idle');
+    if (state.liveActive !== 'placeholder:' + phKey) {
+      const html =
+        isPending ? '<div class="ph"><span class="pulse"></span>session 创建中…<br><span style="opacity:.6">通常 3-10 秒</span></div>' :
+        sessionActive ? '<div class="ph">串流 URL 已过期<br><button class="refresh-btn" onclick="doRefreshLiveUrl()">刷新</button></div>' :
+        '<div class="ph">session 未建立<br><span style="opacity:.6">发任务后自动起</span></div>';
+      _setPlaceholder(body, html);
+      state.liveActive = 'placeholder:' + phKey;
+    }
+    foot.textContent = `${rt.mode} · ${sessionActive ? 'active' : 'idle'}`;
+    return;
+  }
+
+  // URL 就绪：走 LRU
+  _removePlaceholder(body);
+  let entry = state.liveCache.get(accountId);
+  if (entry && entry.url === url) {
+    // 命中 —— 秒切，视频流早已挂着
+    _showOnly(entry.iframe);
+    entry.lastActive = Date.now();
+    _maybeRefreshStaleUrl(accountId, entry);
+  } else {
+    // 未命中或 URL 变了：旧的（如有）先丢，按需淘汰，再建新 iframe
+    if (entry) {
+      try { entry.iframe.remove(); } catch (_) {}
+      state.liveCache.delete(accountId);
+    }
+    _evictLruIfFull();
+    const iframe = document.createElement('iframe');
+    iframe.src = url;
+    iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms allow-popups allow-presentation allow-pointer-lock');
+    iframe.setAttribute('allow', 'clipboard-read; clipboard-write');
+    iframe.className = 'live-cache-iframe';
+    iframe.style.cssText = 'display:block;width:100%;height:100%;border:0;background:#000';
+    body.appendChild(iframe);
+    const now = Date.now();
+    state.liveCache.set(accountId, {iframe, url, urlSetAt: now, lastActive: now});
+    _showOnly(iframe);
+  }
+  state.liveActive = 'iframe';
+  const sz = rt.agentbay && rt.agentbay.screen_size || {};
+  foot.textContent = `${rt.mode} · ${sz.width || '?'}×${sz.height || '?'} · LRU ${state.liveCache.size}/${LIVE_CACHE_MAX}`;
+}
+
+function _showOnly(iframe) {
+  for (const e of state.liveCache.values()) {
+    e.iframe.style.display = e.iframe === iframe ? 'block' : 'none';
+  }
+}
+function _hideAllCachedIframes() {
+  for (const e of state.liveCache.values()) e.iframe.style.display = 'none';
+}
+function _evictLruIfFull() {
+  if (state.liveCache.size < LIVE_CACHE_MAX) return;
+  let oldestKey = null, oldestTime = Infinity;
+  for (const [k, v] of state.liveCache) {
+    if (v.lastActive < oldestTime) { oldestTime = v.lastActive; oldestKey = k; }
+  }
+  if (oldestKey) {
+    const e = state.liveCache.get(oldestKey);
+    try { e.iframe.remove(); } catch (_) {}
+    state.liveCache.delete(oldestKey);
+  }
+}
+function _removePlaceholder(body) {
+  for (const ph of body.querySelectorAll(':scope > .ph')) ph.remove();
+}
+function _setPlaceholder(body, html) {
+  _removePlaceholder(body);
+  _clearImgMount();
+  const tmp = document.createElement('div');
+  tmp.innerHTML = html;
+  const node = tmp.firstElementChild;
+  if (node) body.appendChild(node);
+}
+function _mountImg(body, accountId) {
+  if (!state.liveImg) {
+    const img = document.createElement('img');
+    img.id = 'screenimg';
+    img.alt = 'loading…';
+    body.appendChild(img);
+    state.liveImg = img;
+  }
+  if (state.imgTimer) clearInterval(state.imgTimer);
+  const refresh = () => {
+    if (!state.liveImg) return;
+    state.liveImg.src = brainApi('/api/v1/agent/screen.jpg') + accountQs(accountId) + (accountQs(accountId) ? '&' : '?') + 't=' + Date.now();
+  };
+  refresh();
+  state.imgTimer = setInterval(refresh, 2000);
+  state.liveActive = 'img';
+}
+function _clearImgMount() {
+  if (state.imgTimer) { clearInterval(state.imgTimer); state.imgTimer = null; }
+  if (state.liveImg) { try { state.liveImg.remove(); } catch (_) {} state.liveImg = null; }
+}
+function _maybeRefreshStaleUrl(accountId, entry) {
+  // authcode ~30min 过期：接近阈值时后台刷新，iframe.src 热替换（下一轮 renderLive 自然命中新 URL 分支）
+  if (Date.now() - entry.urlSetAt < LIVE_URL_STALE_MS) return;
+  doRefreshLiveUrl();
+}
+function _evictWorkerFromCache(accountId) {
+  const e = state.liveCache.get(accountId);
+  if (!e) return;
+  try { e.iframe.remove(); } catch (_) {}
+  state.liveCache.delete(accountId);
+}
+
+/* ═══════════════════ 数据拉取 ═══════════════════ */
+
+async function refreshRuntime() {
+  try {
+    const d = await apiGet('/api/v1/agent/runtime', state.activeId);
+    state.runtime = d;
+    renderTopbar();
+    renderLive();
+  } catch (e) { console.error('refreshRuntime', e); }
 }
 
 async function refreshStatus() {
   try {
-    const r = await fetch(brainApi('/api/v1/agent/status') + accountQs());
-    if (!r.ok) throw new Error(r.status);
-    const d = await r.json();
-    const mode = d.mode || '—';
-    els.svMode.innerHTML = '<span class="badge ' + mode + '">' + mode + '</span>';
-    els.hdrMode.textContent = mode;
-    els.hdrMode.className = 'badge ' + mode;
-    els.svActive.textContent = d.is_active ? '✅' : '⚪️';
-    els.svTrace.textContent = d.current_trace_id || '—';
-    els.svGoal.textContent = d.current_goal || '—';
-    els.svElapsed.textContent = d.running_seconds + 's';
-  } catch (e) {
-    console.error('refreshStatus fail', e);
-  }
-}
-
-function escapeHtml(s) {
-  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-}
-
-function connectSSE() {
-  // 单进程模式：连 /api/v1/agent/events（包含所有事件）
-  // 拆分模式：连 Brain SSE（任务事件）+ Session SSE（session 事件）
-  const brainEventsUrl = brainApi('/api/v1/agent/events');
-  const es = new EventSource(brainEventsUrl);
-  es.addEventListener('open', () => {
-    els.conn.classList.add('online');
-    els.connText.textContent = 'SSE 已连接';
-  });
-  es.addEventListener('error', () => {
-    els.conn.classList.remove('online');
-    els.connText.textContent = 'SSE 断线，2s 后重连…';
-    es.close();
-    setTimeout(connectSSE, 2000);
-  });
-
-  // 拆分模式：额外订阅 Session Service 的 SSE（session_active/dead/released 事件）
-  if (BRAIN_URL) {
-    const sessionEs = new EventSource(sessionApi('/api/v1/session/events'));
-    sessionEs.addEventListener('error', () => { sessionEs.close(); setTimeout(() => connectSSE(), 5000); });
-    for (const t of ['runtime_changed']) {
-      sessionEs.addEventListener(t, () => { refreshRuntime(); refreshWorkers(); });
+    const d = await apiGet('/api/v1/agent/status', state.activeId);
+    state.status = d;
+    const t = ensureTranscript(state.activeId || 'default');
+    // 后端是权威：把 goal/trace 同步到 transcript（刷新/换 worker 后能还原）
+    let transcriptChanged = false;
+    if (d.current_goal && d.current_trace_id && d.current_trace_id !== t.traceId) {
+      t.traceId = d.current_trace_id; t.goal = d.current_goal; t.startedAt = Date.now()/1000;
+      transcriptChanged = true;
     }
-    sessionEs.addEventListener('log', e => {
-      let data = {}; try { data = JSON.parse(e.data); } catch (_) { return; }
-      appendLog(data.payload || {}, data.ts);
-    });
-  }
-  // 高层事件仅用于触发状态/runtime 重拉，详情靠下方 Logs 展示
-  for (const t of ['mode_changed', 'task_started', 'task_completed', 'runtime_changed']) {
-    es.addEventListener(t, () => {
-      refreshStatus();
-      if (t !== 'mode_changed') refreshRuntime();
-      if (t === 'runtime_changed') refreshWorkers();  // session 死亡/释放时立即刷新网格
-    });
-  }
-  // 日志事件量大，独立 listener 避免误触发 status/runtime 重拉
-  es.addEventListener('log', e => {
-    let data = {};
-    try { data = JSON.parse(e.data); } catch (_) { return; }
-    appendLog(data.payload || {}, data.ts);
-  });
+    renderTopbar();
+    // 仅在 trace/goal 真变时重绘 transcript；否则靠 SSE 驱动，避免 2s 轮询冲掉滚动位置
+    if (transcriptChanged) renderTranscript();
+    else renderGoalCardOnly();
+  } catch (e) { console.error('refreshStatus', e); }
 }
 
-// 日志过滤器变化时重新渲染（不要重新订阅）
-['input', 'change'].forEach(evt => {
-  document.getElementById('log-filter').addEventListener(evt, rerenderLogs);
-  document.getElementById('log-info').addEventListener(evt, rerenderLogs);
-  document.getElementById('log-warning').addEventListener(evt, rerenderLogs);
-  document.getElementById('log-error').addEventListener(evt, rerenderLogs);
-});
-
-async function postWithAccount(path, extra = {}, target = 'brain') {
-  const base = target === 'session' ? sessionApi(path) : brainApi(path);
-  return fetch(base, {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify(withAccount(extra)),
-  });
+function renderGoalCardOnly() {
+  const host = document.getElementById('transcript');
+  const existing = host.querySelector('.goal-card');
+  const t = ensureTranscript(state.activeId || 'default');
+  const st = state.status;
+  const metaBits = [];
+  if (t.traceId) metaBits.push(`trace=<span style="color:var(--text);font-family:var(--mono)">${escapeHtml(shortTrace(t.traceId))}</span>`);
+  if (st && st.is_active) metaBits.push(`⏱ ${st.running_seconds}s`);
+  if (!existing) return;
+  const metaEl = existing.querySelector('.meta');
+  if (metaEl) metaEl.innerHTML = metaBits.length ? metaBits.join('<span style="color:var(--muted-2)">·</span>') : '';
 }
 
-async function setMode(mode) {
-  try {
-    await postWithAccount('/api/v1/agent/mode/' + mode);
-    refreshStatus();
-  } catch (e) { alert('切换失败: ' + e); }
-}
-
-async function patrol(enable) {
-  try {
-    await postWithAccount('/api/v1/agent/patrol', {enable});
-    refreshStatus();
-    refreshWorkers();
-  } catch (e) { alert('巡逻切换失败: ' + e); }
-}
-
-async function cancelTask() {
-  if (!confirm('确认取消当前任务？')) return;
-  try {
-    await postWithAccount('/api/v1/agent/cancel');
-  } catch (e) { alert('取消失败: ' + e); }
-}
-
-async function releaseSession() {
-  // Actions 面板按钮：作用于当前 active worker
-  return releaseSessionFor(activeAccountId);
-}
-
-async function releaseSessionFor(accountId) {
-  const tag = accountId || 'default';
-  if (!confirm('确认关闭 worker=' + tag + '？\n• 任务会被取消\n• session 销毁，登录态丢失\n• 下次发任务需重新扫码登录')) return;
-  const headers = {'Content-Type': 'application/json'};
-  const baseBody = accountId ? {account_id: accountId} : {};
-  els.submitResult.innerHTML = '⏳ ' + escapeHtml(tag) + ' 关闭中…';
-  try {
-    // 1. 永远先打 cancel（无任务时无害；有任务时让 watcher 触发 terminate_task）
-    await fetch('/api/v1/agent/cancel', {method: 'POST', headers, body: JSON.stringify(baseBody)}).catch(() => {});
-    // 2. 4 轮 × 1.2s 等任务退出再 release（agentbay 的 terminate_task 通常 2-5s 内生效）
-    let r, d;
-    for (let i = 0; i < 4; i++) {
-      await new Promise(rsv => setTimeout(rsv, 1200));
-      r = await fetch('/api/v1/agent/session/release', {method: 'POST', headers, body: JSON.stringify(baseBody)});
-      if (r.ok) { d = await r.json(); break; }
-      els.submitResult.innerHTML = '⏳ ' + escapeHtml(tag) + ' 等任务退出 ' + ((i + 1) * 1.2).toFixed(1) + 's…';
-    }
-    // 3. 仍未释放成功 → force=true 强制（teardown 直接销毁 session，可能让进行中的 SDK 调用报错）
-    if (!r.ok) {
-      els.submitResult.innerHTML = '⚡️ ' + escapeHtml(tag) + ' 强制关闭…';
-      r = await fetch('/api/v1/agent/session/release', {method: 'POST', headers, body: JSON.stringify({...baseBody, force: true})});
-      d = await r.json();
-    }
-    if (!r.ok) {
-      els.submitResult.innerHTML = '❌ ' + escapeHtml(tag) + ' 关闭失败: ' + escapeHtml(String(d && d.detail || r.status));
-      return;
-    }
-    els.submitResult.innerHTML = '🛑 ' + escapeHtml(tag) + ' 已关闭';
-    refreshRuntime();
-    refreshWorkers();
-  } catch (e) {
-    els.submitResult.innerHTML = '❌ ' + escapeHtml(tag) + ' 关闭异常: ' + escapeHtml(String(e));
-  }
-}
-
-async function runPatrolOnce() {
-  try {
-    const r = await postWithAccount('/api/v1/agent/scheduled/patrol-once');
-    const d = await r.json();
-    if (!r.ok) { alert('触发失败: ' + (d.detail || r.status)); return; }
-    els.submitResult.innerHTML = '🎯 已触发人设驱动 patrol [' + escapeHtml(d.account_id || '?') + '], trace=' + escapeHtml(d.trace_id);
-    // patrol 也会拉 session；若还没起来 → 标记 pending
-    const target = d.account_id || activeAccountId;
-    const worker = workersCache.find(w => w.account_id === target);
-    if (worker && !(worker.agentbay && worker.agentbay.live_view_url)) {
-      markPending(target);
-    }
-    refreshStatus();
-    refreshRuntime();
-  } catch (e) { alert('触发失败: ' + e); }
-}
-
-async function swapRuntime() {
-  const target = document.getElementById('rt-select').value;
-  if (target === runtimeMode) { alert('已经是 ' + target); return; }
-  if (!confirm('切换到 ' + target + '？\n当前云手机 session（如有）会被释放。')) return;
-  try {
-    const r = await postWithAccount('/api/v1/agent/runtime/mode', {mode: target});
-    const d = await r.json();
-    if (!r.ok) { alert('切换失败: ' + (d.detail || r.status)); return; }
-    refreshRuntime();
-    refreshStatus();
-  } catch (e) { alert('切换失败: ' + e); }
-}
-
-async function submitTask() {
-  // Dashboard 统一走异步：任务立即在后台起，live view / status / logs 自动反馈进度
-  // 想拿同步结果的脚本走 curl POST /api/v1/agent/actions/sync
-  const goal = document.getElementById('goal').value.trim();
-  if (!goal) { alert('请输入目标'); return; }
-  els.submitResult.textContent = '提交中…';
-  const target = activeAccountId || (workersCache[0] && workersCache[0].account_id);
-  try {
-    const r = await postWithAccount('/api/v1/agent/actions', {user_goal: goal});
-    const d = await r.json();
-    els.submitResult.innerHTML = '🚀 已提交 trace=' + escapeHtml(d.trace_id || '?');
-    // 若目标 worker 还没 session，标记 pending 让 live view 显示"创建中"
-    const worker = workersCache.find(w => w.account_id === target);
-    if (worker && !(worker.agentbay && worker.agentbay.live_view_url)) {
-      markPending(target);
-    }
-    refreshStatus();
-    refreshRuntime();
-  } catch (e) {
-    els.submitResult.textContent = '❌ ' + e;
-  }
-}
-
-// 拉 worker 列表 + 渲染 tab bar
 async function refreshWorkers() {
   try {
     const r = await fetch(brainApi('/api/v1/agent/workers'));
     if (!r.ok) throw new Error(r.status);
     const d = await r.json();
-    workersCache = d.workers || [];
-    // 删 active worker 后或首次：默认指 default
-    if (!activeAccountId || !workersCache.find(w => w.account_id === activeAccountId)) {
-      activeAccountId = d.default_id || (workersCache[0] && workersCache[0].account_id);
+    state.workers = d.workers || [];
+    if (!state.activeId || !state.workers.find(w => w.account_id === state.activeId)) {
+      state.activeId = d.default_id || (state.workers[0] && state.workers[0].account_id) || null;
     }
-    renderWorkerTabs();
-    updateActiveWorkerTags();
-    applyAutoViewMode();
-    if (viewMode === 'grid') renderLiveGrid();
-  } catch (e) { console.error('refreshWorkers fail', e); }
+    renderWorkers();
+    renderTopbar();
+  } catch (e) { console.error('refreshWorkers', e); }
 }
 
-function renderWorkerTabs() {
-  const host = document.getElementById('worker-tabs');
-  host.innerHTML = '';
-  if (!workersCache.length) {
-    const ph = document.createElement('span');
-    ph.className = 'small'; ph.style.cssText = 'padding:6px;color:var(--muted)';
-    ph.textContent = '无 worker';
-    host.appendChild(ph);
+/* ═══════════════════ 动作 ═══════════════════ */
+
+function switchWorker(id) {
+  if (id === state.activeId) return;
+  state.activeId = id;
+  renderWorkers();
+  renderTopbar();
+  renderTranscript();
+  refreshRuntime();
+  refreshStatus();
+}
+
+async function submitTask() {
+  const ta = document.getElementById('goal-input');
+  const goal = ta.value.trim();
+  if (!goal) return;
+  const res = document.getElementById('compose-result');
+  res.textContent = '提交中…';
+  try {
+    const r = await apiPost('/api/v1/agent/actions', state.activeId, {user_goal: goal});
+    const d = await r.json();
+    if (!r.ok) { res.textContent = '❌ ' + (d.detail || r.status); return; }
+    res.textContent = '🚀 ' + shortTrace(d.trace_id || '');
+    ta.value = ''; autoGrow(ta);
+    const target = state.activeId || (state.workers[0] && state.workers[0].account_id);
+    const w = state.workers.find(w => w.account_id === target);
+    if (w && !(w.agentbay && w.agentbay.live_view_url)) markPending(target);
+    refreshStatus(); refreshRuntime();
+  } catch (e) { res.textContent = '❌ ' + e; }
+}
+
+async function cancelTask() {
+  if (!await confirmModal('取消当前任务？')) return;
+  try { await apiPost('/api/v1/agent/cancel', state.activeId); refreshStatus(); }
+  catch (e) { alert('取消失败: ' + e); }
+}
+
+async function setMode(mode) {
+  try { await apiPost('/api/v1/agent/mode/' + mode, state.activeId); refreshStatus(); }
+  catch (e) { alert('切换失败: ' + e); }
+}
+async function setPatrol(on) {
+  try { await apiPost('/api/v1/agent/patrol', state.activeId, {enable: on}); refreshStatus(); refreshWorkers(); }
+  catch (e) { alert('巡逻失败: ' + e); }
+}
+async function runPatrolOnce() {
+  try {
+    const r = await apiPost('/api/v1/agent/scheduled/patrol-once', state.activeId);
+    const d = await r.json();
+    if (!r.ok) { alert('触发失败: ' + (d.detail || r.status)); return; }
+    document.getElementById('compose-result').textContent = `🎯 patrol ${shortTrace(d.trace_id)}`;
+    const target = d.account_id || state.activeId;
+    const w = state.workers.find(w => w.account_id === target);
+    if (w && !(w.agentbay && w.agentbay.live_view_url)) markPending(target);
+    refreshStatus(); refreshRuntime();
+  } catch (e) { alert(e); }
+}
+async function swapRuntime(target) {
+  if (!target) return;
+  if (state.runtime && target === state.runtime.mode) { alert('已经是 ' + target); return; }
+  if (!await confirmModal(`切到 ${target}？\n当前 session（如有）会被释放`)) return;
+  try {
+    const r = await apiPost('/api/v1/agent/runtime/mode', state.activeId, {mode: target});
+    const d = await r.json();
+    if (!r.ok) { alert('切换失败: ' + (d.detail || r.status)); return; }
+    refreshRuntime(); refreshStatus();
+  } catch (e) { alert(e); }
+}
+async function releaseSession() {
+  return releaseSessionFor(state.activeId);
+}
+async function releaseSessionFor(id) {
+  const tag = id || 'default';
+  if (!await confirmModal(`关闭 ${tag}？\n• 任务取消\n• session 销毁\n• 下次扫码`, {danger: true})) return;
+  const res = document.getElementById('compose-result');
+  const headers = {'Content-Type': 'application/json'};
+  const body = id ? {account_id: id} : {};
+  res.textContent = `⏳ ${tag} 关闭中…`;
+  try {
+    await fetch(brainApi('/api/v1/agent/cancel'), {method:'POST', headers, body: JSON.stringify(body)}).catch(()=>{});
+    let r, d;
+    for (let i = 0; i < 4; i++) {
+      await new Promise(rsv => setTimeout(rsv, 1200));
+      r = await fetch(brainApi('/api/v1/agent/session/release'), {method:'POST', headers, body: JSON.stringify(body)});
+      if (r.ok) { d = await r.json(); break; }
+      res.textContent = `⏳ ${tag} 等任务退出…`;
+    }
+    if (!r.ok) {
+      res.textContent = `⚡️ ${tag} 强制关闭…`;
+      r = await fetch(brainApi('/api/v1/agent/session/release'), {method:'POST', headers, body: JSON.stringify({...body, force: true})});
+      d = await r.json();
+    }
+    res.textContent = r.ok ? `🛑 ${tag} 已关闭` : `❌ ${(d && d.detail) || r.status}`;
+    refreshRuntime(); refreshWorkers();
+  } catch (e) { res.textContent = '❌ ' + e; }
+}
+async function removeWorker(id) {
+  if (!await confirmModal(`移除 worker ${id}？\n会释放云端 session（停计费）`, {danger: true})) return;
+  try {
+    const r = await fetch(brainApi('/api/v1/agent/workers/') + encodeURIComponent(id), {method:'DELETE'});
+    const d = await r.json();
+    if (!r.ok) { alert('移除失败: ' + (d.detail || r.status)); return; }
+    // 同时把缓存的 iframe 回收，避免僵尸视频流继续占带宽
+    _evictWorkerFromCache(id);
+    if (state.activeId === id) state.activeId = null;
+    refreshWorkers();
+  } catch (e) { alert(e); }
+}
+
+function markPending(id) {
+  if (!id) return;
+  state.pendingWorkers.add(id);
+  if (id === (state.activeId || 'default')) renderLive();
+  if (state.fastPollTimer) return;
+  let ticks = 0;
+  state.fastPollTimer = setInterval(async () => {
+    ticks++;
+    await refreshWorkers();
+    for (const pid of Array.from(state.pendingWorkers)) {
+      const w = state.workers.find(x => x.account_id === pid);
+      if (w && w.agentbay && w.agentbay.live_view_url) state.pendingWorkers.delete(pid);
+    }
+    if (state.pendingWorkers.size === 0 || ticks >= 15) {
+      clearInterval(state.fastPollTimer);
+      state.fastPollTimer = null;
+    }
+  }, 2000);
+}
+
+let _refreshingLive = false;
+async function doRefreshLiveUrl() {
+  if (_refreshingLive) return;
+  _refreshingLive = true;
+  try {
+    const qs = accountQs(state.activeId);
+    const r = await fetch(brainApi('/api/v1/agent/live-url') + qs);
+    if (!r.ok) return;
+    const d = await r.json();
+    if (d.refreshed && d.live_view_url) {
+      const w = state.workers.find(w => w.account_id === (state.activeId || 'default'));
+      if (w && w.agentbay) w.agentbay.live_view_url = d.live_view_url;
+      await refreshRuntime();
+    }
+  } finally { _refreshingLive = false; }
+}
+
+/* ═══════════════════ Command palette ═══════════════════ */
+
+function getCommands() {
+  const wMany = state.workers.length > 1;
+  const cmds = [
+    { name: '发送任务', hint: '⌘↵', icon: '↵', run: () => document.getElementById('goal-input').focus() },
+    { name: '取消当前任务', hint: '⌘.', icon: '✕', run: cancelTask },
+    { name: '按人设跑一次 Patrol', icon: '◎', run: runPatrolOnce },
+    { name: 'Patrol · 打开', icon: '▸', run: () => setPatrol(true) },
+    { name: 'Patrol · 关闭', icon: '▪', run: () => setPatrol(false) },
+    { name: 'Supervisor · debug', icon: '!', run: () => setMode('debug') },
+    { name: 'Supervisor · waiting', icon: '…', run: () => setMode('waiting') },
+    { name: 'Runtime → local_chrome', icon: '↻', run: () => swapRuntime('local_chrome') },
+    { name: 'Runtime → cloudmobile', icon: '↻', run: () => swapRuntime('cloudmobile') },
+    { name: 'Runtime → agentbay', icon: '↻', run: () => swapRuntime('agentbay') },
+    { name: '释放当前 session', icon: '⏻', run: releaseSession },
+    { name: '新增 worker', icon: '+', run: openAddWorkerModal },
+    { name: '打开 / 收起 Logs', hint: 'L', icon: '⋯', run: () => toggleDrawer() },
+  ];
+  if (wMany) {
+    for (const w of state.workers) {
+      if (w.account_id === state.activeId) continue;
+      cmds.push({ name: '切到 ' + (w.display_name || w.account_id), icon: '→', run: () => switchWorker(w.account_id) });
+    }
+    for (const w of state.workers) {
+      cmds.push({ name: '移除 ' + (w.display_name || w.account_id), icon: '×', run: () => removeWorker(w.account_id) });
+    }
   }
-  for (const w of workersCache) {
-    const tab = document.createElement('div');
-    const svMode = (w.supervisor && w.supervisor.mode) || '';
-    const isActive = w.account_id === activeAccountId;
-    tab.className = 'worker-tab' + (isActive ? ' active' : '') +
-      (svMode === 'executing' ? ' exec' : '') +
-      (svMode === 'patrolling' ? ' patrol' : '') +
-      (svMode === 'debug' ? ' debug' : '');
-    const meta = svMode + (w.supervisor && w.supervisor.is_active ? ' / ' + w.supervisor.running_seconds + 's' : '');
-    // 池里只剩一个 worker 时不显示 × （后端也会拒绝）
-    const xBtn = workersCache.length > 1 ? '<span class="x" title="移除 worker">×</span>' : '';
-    tab.innerHTML = '<span class="dot"></span><span class="label">' + escapeHtml(w.display_name || w.account_id) + '</span><span class="meta">' + escapeHtml(meta) + '</span>' + xBtn;
-    tab.onclick = (e) => {
-      if (e.target.classList.contains('x')) { e.stopPropagation(); removeWorker(w.account_id); return; }
-      switchWorker(w.account_id);
+  return cmds;
+}
+
+let cmdFiltered = [];
+let cmdActive = 0;
+
+function openCmd(prefill) {
+  document.getElementById('cmd-backdrop').classList.add('open');
+  const input = document.getElementById('cmd-input');
+  input.value = typeof prefill === 'string' ? prefill : '';
+  cmdActive = 0;
+  renderCmd();
+  setTimeout(() => { input.focus(); input.select(); }, 0);
+}
+function closeCmd(e) {
+  if (e && e.target && !e.target.classList.contains('cmd-backdrop')) return;
+  document.getElementById('cmd-backdrop').classList.remove('open');
+}
+function renderCmd() {
+  const q = document.getElementById('cmd-input').value.trim().toLowerCase();
+  const all = getCommands();
+  cmdFiltered = q ? all.filter(c => c.name.toLowerCase().includes(q)) : all;
+  if (cmdActive >= cmdFiltered.length) cmdActive = 0;
+  const host = document.getElementById('cmd-results');
+  if (!cmdFiltered.length) { host.innerHTML = '<div class="cmd-empty">无匹配命令</div>'; return; }
+  host.innerHTML = cmdFiltered.map((c, i) => `
+    <div class="cmd-row ${i === cmdActive ? 'active' : ''}" data-i="${i}">
+      <span class="cmd-ic">${c.icon || '·'}</span>
+      <span>${escapeHtml(c.name)}</span>
+      ${c.hint ? `<span class="cmd-hint">${c.hint}</span>` : ''}
+    </div>
+  `).join('');
+  for (const row of host.querySelectorAll('.cmd-row')) {
+    // 用 mousedown 而不是 click：click 需要 mousedown+mouseup 在同一节点上，
+    // 而 mouseenter 若重建 DOM 会打断这条链。mousedown 一次 hit 即触发。
+    row.addEventListener('mousedown', (e) => {
+      e.preventDefault();  // 防止抢焦点
+      cmdActive = +row.dataset.i;
+      runCmdActive();
+    });
+    row.onmouseenter = () => {
+      // 只改 active class，不重建 DOM；避免替换掉 mouse 所在节点导致 click 失效
+      cmdActive = +row.dataset.i;
+      host.querySelectorAll('.cmd-row').forEach(r => r.classList.toggle('active', +r.dataset.i === cmdActive));
     };
-    host.appendChild(tab);
   }
-  // +Add 按钮永远在最后
-  const addBtn = document.createElement('button');
-  addBtn.className = 'worker-add-tab';
-  addBtn.textContent = '+';
-  addBtn.title = '新增 worker';
-  addBtn.onclick = () => toggleAddForm();
-  host.appendChild(addBtn);
+}
+function runCmdActive() {
+  const c = cmdFiltered[cmdActive];
+  closeCmd({target:{classList:{contains:()=>true}}});
+  if (c) setTimeout(() => c.run(), 0);
 }
 
-function toggleAddForm(force) {
-  const form = document.getElementById('worker-add-form');
-  const willShow = force === undefined ? !form.classList.contains('show') : force;
-  form.classList.toggle('show', willShow);
+document.addEventListener('keydown', e => {
+  const cmdOpen = document.getElementById('cmd-backdrop').classList.contains('open');
+  const inCompose = document.activeElement && document.activeElement.id === 'goal-input';
+  // global
+  if ((e.metaKey || e.ctrlKey) && e.key === 'k') { e.preventDefault(); cmdOpen ? closeCmd({target:{classList:{contains:()=>true}}}) : openCmd(); return; }
+  if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && inCompose) { e.preventDefault(); submitTask(); return; }
+  if ((e.metaKey || e.ctrlKey) && e.key === '.') { e.preventDefault(); cancelTask(); return; }
+  if (e.key === 'Escape' && cmdOpen) { closeCmd({target:{classList:{contains:()=>true}}}); return; }
+  if (cmdOpen) {
+    if (e.key === 'ArrowDown') { e.preventDefault(); cmdActive = Math.min(cmdActive + 1, cmdFiltered.length - 1); renderCmd(); }
+    if (e.key === 'ArrowUp')   { e.preventDefault(); cmdActive = Math.max(cmdActive - 1, 0); renderCmd(); }
+    if (e.key === 'Enter')     { e.preventDefault(); runCmdActive(); }
+    return;
+  }
+  if (e.key === 'l' && !inCompose && !e.metaKey && !e.ctrlKey) { toggleDrawer(); }
+});
+document.getElementById('cmd-input').addEventListener('input', renderCmd);
+
+/* ═══════════════════ Modal (prompt / confirm) ═══════════════════ */
+
+let _modalResolve = null;
+function confirmModal(text, {danger=false}={}) {
+  return new Promise(resolve => {
+    _modalResolve = resolve;
+    const modal = document.getElementById('modal');
+    modal.innerHTML = `
+      <h3>确认</h3>
+      <p style="white-space:pre-wrap">${escapeHtml(text)}</p>
+      <div class="row">
+        <button onclick="_modalResolveFn(false)">取消</button>
+        <button class="${danger ? 'danger' : 'primary'}" onclick="_modalResolveFn(true)">${danger ? '确认关闭' : '确认'}</button>
+      </div>
+    `;
+    document.getElementById('modal-backdrop').classList.add('open');
+  });
+}
+function _modalResolveFn(v) {
+  document.getElementById('modal-backdrop').classList.remove('open');
+  if (_modalResolve) { _modalResolve(v); _modalResolve = null; }
+}
+function closeModal(e) {
+  if (e && e.target && !e.target.classList.contains('modal-backdrop')) return;
+  _modalResolveFn(false);
 }
 
-async function createWorkers(count) {
+function openAddWorkerModal() {
+  const modal = document.getElementById('modal');
+  modal.innerHTML = `
+    <h3>新增 worker</h3>
+    <p>一次创建多个 worker（共享配置，编号自增）</p>
+    <div class="row" style="justify-content:flex-start;flex-wrap:wrap">
+      <button class="primary" onclick="_create(1)">+1</button>
+      <button onclick="_create(3)">+3</button>
+      <button onclick="_create(5)">+5</button>
+      <span style="flex:1"></span>
+      <button onclick="_modalResolveFn(false)">关闭</button>
+    </div>
+  `;
+  document.getElementById('modal-backdrop').classList.add('open');
+}
+async function _create(count) {
   try {
     const r = await fetch(brainApi('/api/v1/agent/workers'), {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({count}),
+      method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({count}),
     });
     const d = await r.json();
     if (!r.ok) { alert('创建失败: ' + (d.detail || r.status)); return; }
+    _modalResolveFn(false);
     await refreshWorkers();
-    // 创建即视为"想看多个"，强制切到网格（即便之前用户双击进过单视图）
-    if (workersCache.length > 1) setViewMode('grid');
-    // 单次创建后保持表单展开，方便连续加；用户点 "收起" 关
-  } catch (e) { alert('创建失败: ' + e); }
+  } catch (e) { alert(e); }
 }
 
-async function removeWorker(accountId) {
-  if (!confirm('移除 worker ' + accountId + '？\n会自动释放云端 session（停计费），登录态丢失。')) return;
-  try {
-    const r = await fetch(brainApi('/api/v1/agent/workers/' + encodeURIComponent(accountId)), {method: 'DELETE'});
-    const d = await r.json();
-    if (!r.ok) { alert('移除失败: ' + (d.detail || r.status)); return; }
-    // active worker 被删 → 切回 default
-    if (activeAccountId === accountId) activeAccountId = null;
-    refreshWorkers();
-  } catch (e) { alert('移除失败: ' + e); }
+/* ═══════════════════ Logs drawer ═══════════════════ */
+
+function toggleDrawer(force) {
+  const d = document.getElementById('drawer');
+  const willOpen = force === undefined ? !d.classList.contains('open') : force;
+  d.classList.toggle('open', willOpen);
 }
 
-function switchWorker(accountId) {
-  if (accountId === activeAccountId) return;
-  activeAccountId = accountId;
-  renderWorkerTabs();
-  updateActiveWorkerTags();
-  refreshRuntime();
-  refreshStatus();
-  if (viewMode === 'grid') updateGridActiveHighlight();
-}
-
-async function doRefreshLiveUrl() {
-  // 手动刷新按钮触发：先显示 loading，然后刷新 URL
-  els.liveview.innerHTML = '<div class="placeholder pending"><span class="dot-load"></span>刷新中…</div>';
-  liveViewMounted = 'refreshing';
-  await refreshLiveUrl(activeAccountId);
-}
-
-let _refreshingLiveUrl = false;
-async function refreshLiveUrl(accountId) {
-  if (_refreshingLiveUrl) return;
-  _refreshingLiveUrl = true;
-  try {
-    const qs = accountId ? '?account_id=' + encodeURIComponent(accountId) : '';
-    const r = await fetch('/api/v1/agent/live-url' + qs);
-    if (!r.ok) return;
-    const d = await r.json();
-    if (!d.refreshed || !d.live_view_url) return;
-    // 更新 workersCache 里的 URL
-    const w = workersCache.find(w => w.account_id === (accountId || 'default'));
-    if (w && w.agentbay) w.agentbay.live_view_url = d.live_view_url;
-    // 刷新后重新触发 runtime/grid 渲染，让 mountLiveView 用新 URL 挂 iframe
-    if (viewMode === 'single' && (accountId || 'default') === (activeAccountId || 'default')) {
-      refreshRuntime();
-    }
-    if (viewMode === 'grid') {
-      const cell = document.querySelector('.liveview-cell[data-account="' + (accountId || 'default') + '"]');
-      if (cell) {
-        const ifr = cell.querySelector('iframe');
-        if (ifr && ifr.src !== d.live_view_url) ifr.src = d.live_view_url;
-      }
-    }
-  } catch (e) { console.warn('refreshLiveUrl failed', e); }
-  finally { _refreshingLiveUrl = false; }
-}
-
-function updateActiveWorkerTags() {
-  // 多 worker 时给面板标题加 "→ active worker 名"，单 worker 时不显示（避免噪音）
-  const tag = workersCache.length > 1 ? '→ ' + (activeAccountId || 'default') : '';
-  for (const id of ['active-worker-tag-1', 'active-worker-tag-2', 'active-worker-tag-3', 'active-worker-tag-4']) {
-    const el = document.getElementById(id);
-    if (el) el.textContent = tag;
+function appendLog(payload, ts) {
+  logBuffer.push({payload, ts});
+  if (logBuffer.length > LOG_MAX) logBuffer.splice(0, logBuffer.length - LOG_MAX);
+  const row = renderLogRow(payload, ts);
+  if (row && passesLogFilter(payload)) {
+    const host = document.getElementById('log-body');
+    host.appendChild(row);
+    while (host.children.length > LOG_MAX) host.removeChild(host.firstChild);
+    if (document.getElementById('log-auto').checked) host.scrollTop = host.scrollHeight;
   }
+  document.getElementById('log-stats').textContent = logBuffer.length + ' 行';
 }
-
-function setViewMode(mode) {
-  if (mode === viewMode) return;
-  viewMode = mode;
-  document.getElementById('liveview').style.display = mode === 'single' ? '' : 'none';
-  document.getElementById('liveview-grid').classList.toggle('show', mode === 'grid');
-  // "返回网格" 仅在多 worker + single 模式时显示
-  const back = document.getElementById('back-to-grid');
-  if (back) back.style.display = (mode === 'single' && workersCache.length > 1) ? '' : 'none';
-  if (mode === 'grid') {
-    renderLiveGrid();
-  } else {
-    refreshRuntime();  // 重新挂载 active worker 的单视图（含新 authCode）
+function passesLogFilter(p) {
+  const lvl = p.level || 'INFO';
+  if (lvl === 'DEBUG'   && !document.getElementById('log-debug').checked) return false;
+  if (lvl === 'INFO'    && !document.getElementById('log-info').checked) return false;
+  if (lvl === 'WARNING' && !document.getElementById('log-warning').checked) return false;
+  if (lvl === 'ERROR'   && !document.getElementById('log-error').checked) return false;
+  const q = document.getElementById('log-filter').value.trim().toLowerCase();
+  if (!q) return true;
+  return JSON.stringify(p).toLowerCase().includes(q);
+}
+function renderLogRow(p, ts) {
+  const lvl = p.level || 'INFO';
+  const trace = p.trace_id;
+  const msg = p.msg || p.message || '';
+  const extras = [];
+  for (const k of Object.keys(p)) {
+    if (['level','logger','trace_id','msg','message'].includes(k)) continue;
+    let v = p[k];
+    if (typeof v === 'object') v = JSON.stringify(v);
+    extras.push(k + '=' + v);
   }
+  const row = document.createElement('div');
+  row.className = 'log-row lvl-' + lvl;
+  row.innerHTML =
+    `<span class="ts">${formatTs(ts)}</span>` +
+    `<span class="lvl">${lvl}</span>` +
+    (trace ? `<span class="trace">[${escapeHtml(shortTrace(trace))}]</span>` : '') +
+    `<span>${escapeHtml(msg)}</span>` +
+    (extras.length ? ` <span class="extra">| ${escapeHtml(extras.join(' '))}</span>` : '');
+  return row;
 }
-
-function applyAutoViewMode() {
-  // 单 worker 强制单视图；多 worker 默认网格（用户双击 cell 进 single 后保持，直到他点返回）
-  if (workersCache.length <= 1) {
-    if (viewMode !== 'single') setViewMode('single');
-  } else if (viewMode === 'single') {
-    // 已经在单视图（用户双击进来的）→ 保持，仅同步 "返回网格" 按钮可见性
-    const back = document.getElementById('back-to-grid');
-    if (back) back.style.display = '';
-  } else {
-    // 默认网格
-    if (viewMode !== 'grid') setViewMode('grid');
-  }
-}
-
-function _gridSignature() {
-  // 签名：account_id + live_view_url + pending 标记。URL 变了或 pending 状态变了才重挂 iframe
-  return workersCache.map(w => {
-    const url = (w.agentbay && w.agentbay.live_view_url) || '';
-    const pending = pendingWorkers.has(w.account_id) ? 'p' : '';
-    return w.account_id + '|' + url + '|' + pending;
-  }).join(';');
-}
-
-function renderLiveGrid() {
-  const sig = _gridSignature();
-  if (sig === gridMountedSig && document.getElementById('liveview-grid').children.length === workersCache.length) {
-    updateGridActiveHighlight();
-    return;
-  }
-  gridMountedSig = sig;
-  const host = document.getElementById('liveview-grid');
+function rerenderLogs() {
+  const host = document.getElementById('log-body');
   host.innerHTML = '';
-  for (const w of workersCache) {
-    const cell = document.createElement('div');
-    cell.className = 'liveview-cell' + (w.account_id === activeAccountId ? ' active' : '');
-    cell.dataset.account = w.account_id;
-    const url = w.agentbay && w.agentbay.live_view_url;
-    const meta = (w.supervisor && w.supervisor.mode) || '';
-
-    // cell-header：单击切 active worker，双击进单视图；shutdown 按钮独立 stopPropagation
-    const header = document.createElement('div');
-    header.className = 'cell-header';
-    header.innerHTML =
-      '<span class="label">' + escapeHtml(w.display_name || w.account_id) +
-      '<span class="meta">' + escapeHtml(meta) + '</span></span>' +
-      '<button class="cell-shutdown" title="释放该 session（关机）">⏻</button>';
-    header.onclick = (e) => {
-      if (e.target.classList.contains('cell-shutdown')) return;  // shutdown 自己处理
-      switchWorker(w.account_id);
-    };
-    header.ondblclick = (e) => {
-      if (e.target.classList.contains('cell-shutdown')) return;
-      switchWorker(w.account_id);
-      setViewMode('single');
-    };
-    header.querySelector('.cell-shutdown').onclick = (e) => {
-      e.stopPropagation();
-      releaseSessionFor(w.account_id);
-    };
-
-    cell.appendChild(header);
-    if (url) {
-      const ifr = document.createElement('iframe');
-      ifr.src = url;
-      ifr.setAttribute('allow', 'clipboard-read; clipboard-write');
-      cell.appendChild(ifr);
-    } else {
-      const ph = document.createElement('div');
-      const isPending = pendingWorkers.has(w.account_id);
-      ph.className = isPending ? 'ph pending' : 'ph';
-      ph.innerHTML = isPending
-        ? '<div><span class="dot-load"></span>session 创建中…<br><span style="opacity:.6;font-size:11px">通常 3-10 秒</span></div>'
-        : 'session 未建立<br><span style="opacity:.6">发任务后即可看到屏幕</span>';
-      cell.appendChild(ph);
-    }
-    // 全身点击 overlay：非 active 时覆盖 iframe，接住第一次点击切 active；active 时被 CSS 隐藏
-    const overlay = document.createElement('div');
-    overlay.className = 'cell-overlay';
-    overlay.title = '点击切换到此 worker（再次点击才会操作云手机）';
-    overlay.onclick = () => switchWorker(w.account_id);
-    overlay.ondblclick = () => { switchWorker(w.account_id); setViewMode('single'); };
-    cell.appendChild(overlay);
-    host.appendChild(cell);
+  for (const r of logBuffer) {
+    if (passesLogFilter(r.payload)) host.appendChild(renderLogRow(r.payload, r.ts));
   }
+  if (document.getElementById('log-auto').checked) host.scrollTop = host.scrollHeight;
+}
+function clearLogs() {
+  logBuffer.length = 0;
+  document.getElementById('log-body').innerHTML = '';
+  document.getElementById('log-stats').textContent = '0 行';
+}
+for (const id of ['log-filter','log-debug','log-info','log-warning','log-error']) {
+  document.getElementById(id).addEventListener('input', rerenderLogs);
+  document.getElementById(id).addEventListener('change', rerenderLogs);
 }
 
-function updateGridActiveHighlight() {
-  for (const cell of document.querySelectorAll('.liveview-cell')) {
-    cell.classList.toggle('active', cell.dataset.account === activeAccountId);
+/* ═══════════════════ SSE ═══════════════════ */
+
+function connectSSE() {
+  const conn = document.getElementById('conn');
+  const connText = document.getElementById('conn-text');
+  const es = new EventSource(brainApi('/api/v1/agent/events'));
+  es.addEventListener('open', () => { conn.classList.add('online'); connText.textContent = 'online'; });
+  es.addEventListener('error', () => {
+    conn.classList.remove('online'); connText.textContent = 'reconnecting…';
+    es.close(); setTimeout(connectSSE, 2000);
+  });
+  if (BRAIN_URL) {
+    const sess = new EventSource(sessionApi('/api/v1/session/events'));
+    sess.addEventListener('error', () => { sess.close(); });
+    sess.addEventListener('runtime_changed', () => { refreshRuntime(); refreshWorkers(); });
+    sess.addEventListener('log', e => {
+      let d = {}; try { d = JSON.parse(e.data); } catch (_) { return; }
+      const p = d.payload || {}; appendLog(p, d.ts); onLogEvent(p, d.ts);
+    });
   }
+  for (const t of ['mode_changed','task_started','task_completed','runtime_changed']) {
+    es.addEventListener(t, () => {
+      refreshStatus();
+      if (t !== 'mode_changed') refreshRuntime();
+      if (t === 'runtime_changed') refreshWorkers();
+    });
+  }
+  es.addEventListener('log', e => {
+    let d = {}; try { d = JSON.parse(e.data); } catch (_) { return; }
+    const p = d.payload || {};
+    appendLog(p, d.ts);
+    onLogEvent(p, d.ts);
+  });
 }
 
-// ── 网格模式快捷键：方向键切换选中 worker ────────────────
-document.addEventListener('keydown', e => {
-  if (viewMode !== 'grid' || !workersCache.length) return;
-  const arrows = {ArrowLeft: -1, ArrowRight: 1, ArrowUp: -2, ArrowDown: 2, Enter: 0};
-  const delta = arrows[e.key];
-  if (delta === undefined) return;
-  e.preventDefault();
+/* ═══════════════════ 启动 ═══════════════════ */
 
-  // Enter / 双击 → 进入单视图
-  if (delta === 0) { setViewMode('single'); return; }
-
-  // 计算当前网格列数（基于实际渲染宽度）
-  const host = document.getElementById('liveview-grid');
-  const cells = host.querySelectorAll('.liveview-cell');
-  if (!cells.length) return;
-  const firstTop = cells[0].getBoundingClientRect().top;
-  let cols = 0;
-  for (const c of cells) { if (c.getBoundingClientRect().top === firstTop) cols++; else break; }
-  cols = Math.max(cols, 1);
-
-  const ids = workersCache.map(w => w.account_id);
-  const curIdx = ids.indexOf(activeAccountId);
-  let nextIdx;
-  if (Math.abs(delta) === 1) {
-    nextIdx = curIdx + delta;  // 左右
-  } else {
-    nextIdx = curIdx + (delta > 0 ? cols : -cols);  // 上下按列数跳
-  }
-  if (nextIdx < 0 || nextIdx >= ids.length) return;
-  switchWorker(ids[nextIdx]);
-});
-
-// ── 启动 ─────────────────────────────────────────────────
-// 先检测是否拆分模式（Session Service 提供 /api/v1/session/config）
 (async function boot() {
   try {
     const r = await fetch('/api/v1/session/config');
-    if (r.ok) {
-      const cfg = await r.json();
-      if (cfg.brain_url) BRAIN_URL = cfg.brain_url.replace(/\/+$/, '');
-    }
-  } catch (_) { /* 单进程模式，无 session config 端点 */ }
+    if (r.ok) { const cfg = await r.json(); if (cfg.brain_url) BRAIN_URL = cfg.brain_url.replace(/\/+$/, ''); }
+  } catch (_) {}
 
   await refreshWorkers();
   refreshRuntime();
@@ -1075,6 +1405,10 @@ document.addEventListener('keydown', e => {
   setInterval(refreshStatus, 2000);
   setInterval(refreshRuntime, 10000);
   setInterval(refreshWorkers, 5000);
+
+  // 暴露给 HTML inline handler
+  window._modalResolveFn = _modalResolveFn;
+  window._create = _create;
 })();
 </script>
 </body>

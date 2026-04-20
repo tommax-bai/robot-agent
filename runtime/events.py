@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import threading
 import time
 from enum import StrEnum
@@ -120,8 +121,15 @@ class _LogHandler(logging.Handler):
 
 
 def attach_log_bridge(bus: EventBus, target: str = "") -> _LogHandler:
-    """把日志记录转发到 EventBus。默认挂 root，覆盖 facade + stdlib `getLogger(__name__)` 两种调用。"""
-    handler = _LogHandler(bus)
+    """把日志记录转发到 EventBus。默认挂 root，覆盖 facade + stdlib `getLogger(__name__)` 两种调用。
+
+    默认等级跟随 env `SSE_LOG_LEVEL`（DEBUG | INFO | WARNING | ERROR），未设则用 DEBUG。
+    之所以默认放到 DEBUG：dashboard 里有对应的 DEBUG 复选框（默认关），SSE 把全部 level
+    都推给前端、由前端决定是否展示。线上觉得吵可以在 .env 里把 SSE_LOG_LEVEL 调到 INFO。
+    """
+    env_level = os.getenv("SSE_LOG_LEVEL", "DEBUG").upper()
+    lvl = getattr(logging, env_level, logging.DEBUG)
+    handler = _LogHandler(bus, level=lvl)
     logging.getLogger(target).addHandler(handler)
     return handler
 
