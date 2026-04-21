@@ -42,7 +42,40 @@
   }
   /* 云桌面（Windows/Linux 镜像）横屏 16:9，380px 太窄会把远程桌面切掉；活跃 worker
      为桌面时把 live 列拉宽到 ~42vw，保证完整画面能看到。 */
-  .app.live-desktop { grid-template-columns: 240px 1fr minmax(560px, 42vw); }
+  .app.live-desktop { grid-template-columns: 240px 1fr minmax(720px, 50vw); }
+  /* 桌面流（Windows/Linux）锁 16:9 aspect ratio，顶对齐；
+     让阿里 Web 串流按原生比例渲染，不再被近正方形容器挤压裁切。*/
+  .app.live-desktop .live-body { display: block; overflow: auto; }
+  .app.live-desktop .live-body iframe {
+    width: 100%; aspect-ratio: 16 / 9; height: auto; display: block;
+    background: #000;
+  }
+  .app.live-desktop .live-body .ph { margin: 24px auto; }
+
+  /* 全屏 live overlay：点 ⛶ 按钮，整屏看云桌面；ESC 或 ✕ 退出 */
+  .live-fullscreen {
+    position: fixed; inset: 0; background: #000; z-index: 110;
+    display: none; flex-direction: column;
+  }
+  .live-fullscreen.show { display: flex; }
+  .live-fullscreen .fs-head {
+    padding: 10px 16px; color: var(--muted); font-size: 12px;
+    display: flex; align-items: center; gap: 10px;
+    background: rgba(0,0,0,.7); border-bottom: 1px solid var(--border);
+  }
+  .live-fullscreen .fs-head .close {
+    margin-left: auto; background: transparent; border: 0; color: var(--text);
+    font-size: 18px; width: 28px; height: 28px; border-radius: 6px; cursor: pointer;
+  }
+  .live-fullscreen .fs-head .close:hover { background: rgba(255,255,255,.08); }
+  .live-fullscreen .fs-body { flex: 1; min-height: 0; position: relative; }
+  .live-fullscreen .fs-body iframe { width: 100%; height: 100%; border: 0; background: #000; }
+
+  .live-head .fs-btn {
+    background: transparent; border: 0; color: var(--muted); cursor: pointer;
+    font-size: 14px; padding: 2px 6px; border-radius: 4px;
+  }
+  .live-head .fs-btn:hover { background: rgba(255,255,255,.06); color: var(--text); }
   .topbar {
     grid-area: topbar; display: flex; align-items: center; gap: 14px;
     padding: 0 16px; border-bottom: 1px solid var(--border); background: var(--bg);
@@ -108,6 +141,150 @@
   .worker .status-dot.patrolling { background: var(--success); }
   .worker .status-dot.debug      { background: var(--error); }
   .worker .status-dot.waiting    { background: var(--muted-2); }
+  /* 活跃任务心跳：supervisor.is_active 时脉冲，让 worker tab 一眼可见"在跑" */
+  .worker .status-dot.pulse { animation: worker-pulse 1.4s ease-out infinite; }
+  @keyframes worker-pulse {
+    0%   { box-shadow: 0 0 0 0 rgba(16,185,129,.55); }
+    70%  { box-shadow: 0 0 0 8px rgba(16,185,129,0); }
+    100% { box-shadow: 0 0 0 0 rgba(16,185,129,0); }
+  }
+  .worker .status-dot.executing.pulse {
+    animation: worker-pulse-warn 1.4s ease-out infinite;
+  }
+  @keyframes worker-pulse-warn {
+    0%   { box-shadow: 0 0 0 0 rgba(245,158,11,.55); }
+    70%  { box-shadow: 0 0 0 8px rgba(245,158,11,0); }
+    100% { box-shadow: 0 0 0 0 rgba(245,158,11,0); }
+  }
+
+  /* ── 当前活动条（嵌在 goal-card 里，始终可见）───────────── */
+  .activity-strip {
+    display: flex; align-items: center; gap: 10px;
+    margin-top: 12px; padding: 8px 12px; border-radius: var(--radius);
+    background: rgba(59,130,246,.08); border: 1px solid rgba(59,130,246,.2);
+    font-size: 12px; color: var(--text);
+  }
+  .activity-strip.idle { display: none; }
+  .activity-strip .phase {
+    display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px;
+    border-radius: 999px; background: rgba(59,130,246,.18); color: #93c5fd;
+    font-weight: 600; font-size: 11px; letter-spacing: .02em;
+  }
+  .activity-strip .phase .spinner {
+    width: 8px; height: 8px; border-radius: 50%; background: #60a5fa;
+    animation: activity-pulse 1s ease-in-out infinite;
+  }
+  @keyframes activity-pulse {
+    0%, 100% { opacity: .3; transform: scale(.8); }
+    50%      { opacity: 1;  transform: scale(1); }
+  }
+  .activity-strip .detail { color: var(--muted); flex: 1; min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .activity-strip .elapsed { color: var(--muted); font-family: var(--mono); font-size: 11px; }
+  .activity-strip.done { background: rgba(16,185,129,.08); border-color: rgba(16,185,129,.2); }
+  .activity-strip.done .phase { background: rgba(16,185,129,.18); color: #6ee7b7; }
+  .activity-strip.failed { background: rgba(239,68,68,.08); border-color: rgba(239,68,68,.25); }
+  .activity-strip.failed .phase { background: rgba(239,68,68,.18); color: #fca5a5; }
+  /* 巡逻待命：muted 绿色（和 active thinking 的蓝色区分开）*/
+  .activity-strip.standby { background: rgba(16,185,129,.06); border-color: rgba(16,185,129,.18); }
+  .activity-strip.standby .phase { background: rgba(16,185,129,.14); color: #86efac; }
+  .activity-strip.standby .phase .spinner { background: #86efac; animation-duration: 2s; }
+
+  /* ── Data 面板（overlay 全屏，三 tab 子视图）─────────────────── */
+  .data-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,.55);
+    z-index: 100; display: none; align-items: stretch; justify-content: center;
+  }
+  .data-overlay.show { display: flex; }
+  .data-panel {
+    width: min(1100px, 96vw); margin: 32px 0; background: var(--bg); border-radius: var(--radius-lg);
+    border: 1px solid var(--border); display: flex; flex-direction: column; overflow: hidden;
+    box-shadow: 0 20px 60px rgba(0,0,0,.4);
+  }
+  .data-head {
+    display: flex; align-items: center; padding: 14px 20px; border-bottom: 1px solid var(--border);
+    gap: 12px;
+  }
+  .data-head .title { font-weight: 600; color: var(--text); font-size: 14px; }
+  .data-head .grow { flex: 1; }
+  .data-head .close {
+    background: transparent; border: 0; color: var(--muted); font-size: 18px; cursor: pointer;
+    width: 28px; height: 28px; border-radius: 6px;
+  }
+  .data-head .close:hover { background: rgba(255,255,255,.06); color: var(--text); }
+  .data-tabs {
+    display: flex; gap: 4px; padding: 8px 16px 0; border-bottom: 1px solid var(--border);
+  }
+  .data-tabs .tab {
+    padding: 8px 14px; font-size: 12.5px; color: var(--muted);
+    cursor: pointer; border: 0; background: transparent; border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+  }
+  .data-tabs .tab.active { color: var(--text); border-bottom-color: #3b82f6; font-weight: 600; }
+  .data-body { flex: 1; overflow: auto; padding: 18px 24px 28px; }
+
+  /* 简表格 */
+  .data-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  .data-table th, .data-table td {
+    text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border);
+    color: var(--text);
+  }
+  .data-table th { color: var(--muted); font-weight: 600; font-size: 11.5px;
+    text-transform: uppercase; letter-spacing: .04em; position: sticky; top: 0;
+    background: var(--bg); z-index: 1; }
+  .data-table tr:hover td { background: rgba(255,255,255,.02); }
+  .data-table .mono { font-family: var(--mono); font-size: 11.5px; color: var(--muted); }
+  .data-table td.ellipsis { max-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .data-table .row-click { cursor: pointer; }
+
+  .pill-status { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+  .pill-status.running   { background: rgba(59,130,246,.18); color: #93c5fd; }
+  .pill-status.completed { background: rgba(16,185,129,.18); color: #6ee7b7; }
+  .pill-status.failed    { background: rgba(239,68,68,.18); color: #fca5a5; }
+  .pill-status.unknown   { background: rgba(148,163,184,.18); color: var(--muted); }
+
+  /* Agent state 分组列表 */
+  .state-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .state-card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 14px 16px;
+  }
+  .state-card h4 { margin: 0 0 8px; font-size: 12px; color: var(--muted);
+    text-transform: uppercase; letter-spacing: .04em; font-weight: 600; }
+  .state-card .count { float: right; color: var(--muted); font-size: 11px; font-weight: 400; }
+  .state-card ul { list-style: none; margin: 0; padding: 0; max-height: 180px; overflow: auto; }
+  .state-card li { font-size: 12.5px; color: var(--text); padding: 4px 0; border-bottom: 1px dashed var(--border); }
+  .state-card li:last-child { border: 0; }
+  .state-card .scalar { font-size: 13px; color: var(--text); }
+  .state-card.empty .scalar, .state-card.empty ul { color: var(--muted); font-style: italic; }
+
+  /* Token usage 条形图 */
+  .token-summary { display: flex; flex-direction: column; gap: 10px; }
+  .token-row {
+    display: grid; grid-template-columns: 90px 1fr 120px; gap: 12px; align-items: center;
+    font-size: 12.5px;
+  }
+  .token-row .date { color: var(--muted); font-family: var(--mono); font-size: 11.5px; }
+  .token-row .bar-wrap { background: rgba(255,255,255,.04); border-radius: 4px; height: 22px; overflow: hidden; position: relative; }
+  .token-row .bar { height: 100%; background: linear-gradient(90deg, #3b82f6, #8b5cf6); }
+  .token-row .num { text-align: right; color: var(--text); font-family: var(--mono); }
+
+  /* Task 详情 */
+  .task-detail-meta {
+    display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 14px;
+    font-size: 12px; color: var(--muted);
+  }
+  .task-detail-meta .kv { background: var(--surface); padding: 4px 10px; border-radius: 6px; border: 1px solid var(--border); }
+  .task-detail-meta .kv b { color: var(--text); font-weight: 600; margin-right: 4px; }
+  .task-detail-body {
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 14px 16px; white-space: pre-wrap; font-size: 12.5px; line-height: 1.6;
+    color: var(--text); max-height: 60vh; overflow: auto;
+  }
+  .data-empty { color: var(--muted); font-size: 12.5px; padding: 40px 0; text-align: center; }
+  .data-back { background: transparent; border: 1px solid var(--border); color: var(--text);
+    padding: 4px 10px; border-radius: 6px; font-size: 12px; cursor: pointer; }
+  .data-back:hover { background: rgba(255,255,255,.04); }
   .worker .x {
     opacity: 0; width: 16px; height: 16px; border: 0; border-radius: 4px;
     background: transparent; color: var(--muted); cursor: pointer; font-size: 14px; line-height: 1;
@@ -337,6 +514,7 @@
       <span id="ctx-step" style="display:none"></span>
     </span>
     <span class="grow"></span>
+    <button class="drawer-toggle" onclick="openDataPanel()">Data</button>
     <button class="drawer-toggle" onclick="toggleDrawer()">Logs</button>
     <span class="conn" id="conn"><span class="bullet"></span><span id="conn-text">connecting…</span></span>
     <span class="kbd" onclick="openCmd()" style="cursor:pointer" title="Command palette">⌘K</span>
@@ -388,6 +566,8 @@
     <div class="live-head">
       <span>Live</span>
       <span class="status" id="live-status">—</span>
+      <span style="flex:1"></span>
+      <button class="fs-btn" onclick="openLiveFullscreen()" title="全屏查看（ESC 退出）">⛶</button>
     </div>
     <div class="live-body" id="live-body">
       <div class="ph">选择 worker</div>
@@ -398,6 +578,16 @@
       <button class="muted-icon" onclick="doRefreshLiveUrl()" title="刷新串流 URL">↻</button>
     </div>
   </aside>
+</div>
+
+<!-- 全屏 live overlay（桌面模式用；ESC 或 ✕ 关闭）-->
+<div class="live-fullscreen" id="live-fullscreen">
+  <div class="fs-head">
+    <span>Live · 全屏</span>
+    <span class="status" id="live-fs-info">—</span>
+    <button class="close" onclick="closeLiveFullscreen()" title="关闭（ESC）">✕</button>
+  </div>
+  <div class="fs-body" id="live-fs-body"></div>
 </div>
 
 <!-- command palette -->
@@ -443,6 +633,7 @@ const state = {
   status: null,        // /agent/status  最新返回
   transcripts: new Map(),   // account_id -> { traceId, goal, startedAt, bubbles: [], stepMap }
   traceToAccount: new Map(),// trace_id -> account_id（用于路由 subtask/vision 等无 account_id 的事件）
+  activity: new Map(),      // account_id -> { phase, label, detail, startedAt, phaseAt, subtaskIdx, subtaskTotal, stepIdx, done }
   freshIds: new Set(),
   pendingWorkers: new Set(),
   // Live view LRU cache：最多同时保留 LIVE_CACHE_MAX 个云手机 iframe（隐藏 display:none），
@@ -523,6 +714,119 @@ function resetTranscriptFor(id) {
   if (id === (state.activeId || 'default')) renderTranscript();
 }
 
+/* ═══════════════════ 活动阶段追踪 ═══════════════════ */
+
+/** phase → 展示文案（中文），决定 activity-strip 的主 chip 内容 */
+const PHASE_LABELS = {
+  initializing: '初始化',
+  session_acquiring: '创建云手机 session',
+  planning: '规划任务 (LLM)',
+  plan_ready: '已生成计划',
+  subtask_running: '执行子任务',
+  observing: '观察画面',
+  thinking: '思考 (LLM)',
+  acting: '执行动作',
+  delegated: '远端 Agent 执行中',
+  finishing: '子任务完成',
+  done: '任务完成',
+  failed: '任务失败',
+  // 调度待命：mode=patrolling 但没有活跃 trace（scheduler tick / 轮间休息 / 策略 LLM 生成中）
+  patrol_standby: '巡逻待命中（调度循环）',
+};
+
+function ensureActivity(accountId) {
+  if (!state.activity.has(accountId)) {
+    state.activity.set(accountId, {
+      phase: null, detail: '', startedAt: null, phaseAt: null,
+      subtaskIdx: null, subtaskTotal: null, stepIdx: null, done: null,
+    });
+  }
+  return state.activity.get(accountId);
+}
+
+function setPhase(accountId, phase, patch = {}) {
+  const a = ensureActivity(accountId);
+  const now = Date.now() / 1000;
+  if (a.phase !== phase) {
+    a.phase = phase;
+    a.phaseAt = now;
+  }
+  Object.assign(a, patch);
+  if (accountId === (state.activeId || 'default')) {
+    // 活动状态变化立即重渲染 goal-card（仅头部，bubbles 不动）
+    updateActivityStrip(accountId);
+  }
+}
+
+function clearActivity(accountId) {
+  if (state.activity.has(accountId)) {
+    const a = state.activity.get(accountId);
+    a.phase = null; a.done = null; a.subtaskIdx = null; a.stepIdx = null;
+  }
+  if (accountId === (state.activeId || 'default')) updateActivityStrip(accountId);
+}
+
+/** 只更新 activity-strip（不重排 bubbles），给 1s ticker 用 */
+function updateActivityStrip(accountId) {
+  const host = document.getElementById('transcript');
+  if (!host) return;
+  const goalCard = host.querySelector('.goal-card');
+  if (!goalCard) return;
+  const existing = goalCard.querySelector('.activity-strip');
+  const html = renderActivityStripHtml(accountId);
+  if (!html) {
+    if (existing) existing.remove();
+    return;
+  }
+  if (existing) existing.outerHTML = html;
+  else goalCard.insertAdjacentHTML('beforeend', html);
+}
+
+function renderActivityStripHtml(accountId) {
+  let a = state.activity.get(accountId);
+  // patrol 待命合成：mode=patrolling 但没有活跃 trace（task 未启动 / 轮间休息 / 策略 LLM 生成中）
+  // 这种情况后端没发任何事件，但用户期望看到"调度在跑"。合成一条 patrol_standby 占位。
+  const w = state.workers.find(x => x.account_id === accountId);
+  const sv = w && w.supervisor;
+  const isIdlePatrolling = sv && sv.mode === 'patrolling' && !sv.is_active
+    && (!a || !a.phase || a.phase === 'done' || a.phase === 'failed');
+  if (isIdlePatrolling) {
+    // 上一个任务的 done/failed 不能沿用其 startedAt（否则总耗时会一直累加）。
+    // 只有纯空白（从未跑过任务）才用 mode 切换时间做起点；其它情况重置为现在。
+    const prevWasTask = a && a.phase && a.phase !== 'patrol_standby';
+    const synthStart = prevWasTask ? (Date.now() / 1000) : ((a && a.startedAt) || (Date.now() / 1000));
+    a = {
+      phase: 'patrol_standby', detail: '',
+      startedAt: synthStart, phaseAt: synthStart,
+      subtaskIdx: null, subtaskTotal: null, stepIdx: null,
+    };
+  }
+  if (!a || !a.phase) return '';
+  const isDone = a.phase === 'done';
+  const isFailed = a.phase === 'failed';
+  const label = PHASE_LABELS[a.phase] || a.phase;
+  const showSpinner = !isDone && !isFailed;
+  const elapsed = a.phaseAt ? Math.max(0, Math.floor(Date.now() / 1000 - a.phaseAt)) : 0;
+  const totalElapsed = a.startedAt ? Math.max(0, Math.floor(Date.now() / 1000 - a.startedAt)) : 0;
+  const parts = [];
+  if (a.subtaskIdx != null && a.subtaskTotal != null)
+    parts.push(`子任务 ${a.subtaskIdx}/${a.subtaskTotal}`);
+  if (a.stepIdx != null) parts.push(`Step ${a.stepIdx}`);
+  if (a.detail) parts.push(a.detail);
+  const detailHtml = parts.length ? `<span class="detail">${escapeHtml(parts.join(' · '))}</span>` : '<span class="detail"></span>';
+  const spinner = showSpinner ? '<span class="spinner"></span>' : '';
+  const isStandby = a.phase === 'patrol_standby';
+  const elapsedLabel = isDone || isFailed
+    ? `总耗时 ${totalElapsed}s`
+    : (isStandby ? `已等待 ${totalElapsed}s` : `此阶段 ${elapsed}s · 总 ${totalElapsed}s`);
+  const classList = isDone ? ' done' : (isFailed ? ' failed' : (isStandby ? ' standby' : ''));
+  return `<div class="activity-strip${classList}">
+    <span class="phase">${spinner}${escapeHtml(label)}</span>
+    ${detailHtml}
+    <span class="elapsed">${escapeHtml(elapsedLabel)}</span>
+  </div>`;
+}
+
 /** 把单条 log 事件喂给 transcript */
 function onLogEvent(payload, ts) {
   const ev = payload.event;
@@ -535,10 +839,15 @@ function onLogEvent(payload, ts) {
 
   if (ev === 'task.started') {
     if (traceId) state.traceToAccount.set(traceId, accountId);
-    // 新 trace → 重置这个 worker 的 transcript
+    const nowSec = ts || Date.now()/1000;
     state.transcripts.set(accountId, {
-      traceId: traceId, goal: payload.goal || '', startedAt: ts || Date.now()/1000,
+      traceId: traceId, goal: payload.goal || '', startedAt: nowSec,
       bubbles: [], stepMap: new Map(),
+    });
+    state.activity.set(accountId, {
+      phase: 'initializing', detail: payload.kind || '',
+      startedAt: nowSec, phaseAt: nowSec,
+      subtaskIdx: null, subtaskTotal: null, stepIdx: null, done: null,
     });
     pushBubble(accountId, {
       kind: 'task', ts, title: '任务开始', detail: payload.goal || '',
@@ -547,11 +856,13 @@ function onLogEvent(payload, ts) {
     return;
   }
   if (ev === 'task.completed') {
+    setPhase(accountId, 'done', { detail: '' });
     pushBubble(accountId, { kind: 'finish', ts, title: '任务完成', detail: payload.summary || payload.msg || '' });
     if (traceId) state.traceToAccount.delete(traceId);
     return;
   }
   if (ev === 'task.failed') {
+    setPhase(accountId, 'failed', { detail: payload.error || '' });
     pushBubble(accountId, { kind: 'error', ts, title: '任务失败', detail: payload.error || payload.msg || '' });
     if (traceId) state.traceToAccount.delete(traceId);
     return;
@@ -581,18 +892,33 @@ function onLogEvent(payload, ts) {
     });
     return;
   }
+  if (ev === 'plan.started') {
+    setPhase(accountId, 'planning', { detail: payload.goal || '' });
+    // 让用户知道"正在拆解"，避免 10-15s 空白
+    pushBubble(accountId, { kind: 'note', ts, title: '开始规划', detail: '正在拆解任务成子任务…' });
+    return;
+  }
   if (ev === 'plan.generated') {
+    const n = payload.subtask_count ?? '?';
+    setPhase(accountId, 'plan_ready', { detail: `共 ${n} 个子任务` });
     pushBubble(accountId, {
-      kind: 'plan', ts, title: `计划 · ${payload.subtask_count ?? '?'} 个子任务`,
+      kind: 'plan', ts, title: `计划 · ${n} 个子任务`,
       subtasks: payload.subtasks || [],
     });
     return;
   }
   if (ev === 'plan.failed') {
+    setPhase(accountId, 'failed', { detail: payload.error || '' });
     pushBubble(accountId, { kind: 'error', ts, title: '计划失败', detail: payload.error || '' });
     return;
   }
   if (ev === 'subtask.started') {
+    setPhase(accountId, 'subtask_running', {
+      detail: payload.sub_goal || '',
+      subtaskIdx: payload.index ?? null,
+      subtaskTotal: payload.total ?? null,
+      stepIdx: null,
+    });
     pushBubble(accountId, {
       kind: 'subtask', ts,
       title: `子任务 ${payload.index ?? '?'}/${payload.total ?? '?'}`,
@@ -601,10 +927,12 @@ function onLogEvent(payload, ts) {
     return;
   }
   if (ev === 'subtask.completed') {
+    setPhase(accountId, 'finishing', { detail: payload.sub_goal || '' });
     pushBubble(accountId, { kind: 'finish', ts, title: '子任务完成', detail: payload.sub_goal || '' });
     return;
   }
   if (ev === 'subtask.failed') {
+    setPhase(accountId, 'failed', { detail: payload.error || payload.sub_goal || '' });
     pushBubble(accountId, { kind: 'error', ts, title: '子任务失败', detail: payload.error || payload.sub_goal || '' });
     return;
   }
@@ -614,6 +942,10 @@ function onLogEvent(payload, ts) {
     return;
   }
   if (ev === 'vision.observed') {
+    setPhase(accountId, 'observing', {
+      stepIdx: payload.step,
+      detail: payload.page_state ? `page=${payload.page_state}` : '',
+    });
     // 每步只开一个 step bubble；后续 vision.decided 往同一 bubble 填 thought/actions
     const key = `${traceId}#${payload.step}`;
     const existing = t.stepMap.get(key);
@@ -628,6 +960,7 @@ function onLogEvent(payload, ts) {
     return;
   }
   if (ev === 'vision.decided') {
+    setPhase(accountId, 'thinking', { stepIdx: payload.step });
     const key = `${traceId}#${payload.step}`;
     const bub = t.stepMap.get(key);
     const thought = payload.thought || '';
@@ -637,12 +970,14 @@ function onLogEvent(payload, ts) {
       state.freshIds.add(bub.id);
       renderTranscript();
     } else {
-      // 极少数情况下 decided 比 observed 先到
       pushBubble(accountId, { kind: 'step', ts, title: `Step ${payload.step}`, thought, actions });
     }
+    // 决策完成 → 马上进入 acting（下一次 observed 才切回 observing）
+    setPhase(accountId, 'acting', { stepIdx: payload.step, detail: `${actions.length} 个动作` });
     return;
   }
   if (ev === 'vision.finished') {
+    setPhase(accountId, 'finishing', { stepIdx: payload.step });
     pushBubble(accountId, { kind: 'finish', ts, title: `完成 step ${payload.step}`, detail: payload.summary || '' });
     return;
   }
@@ -650,11 +985,21 @@ function onLogEvent(payload, ts) {
     pushBubble(accountId, { kind: 'error', ts, title: '动作失败', detail: payload.error || payload.message || '' , extras: payload });
     return;
   }
+  if (ev === 'backend.session.acquired') {
+    // 在 planning 之前显示"云手机已就绪"，避免用户以为卡在初始化
+    const a = state.activity.get(accountId);
+    if (a && (a.phase === 'initializing' || a.phase === 'session_acquiring')) {
+      setPhase(accountId, 'plan_ready', { detail: '云手机已就绪' });
+    }
+    return;
+  }
   if (ev === 'strategy.delegated') {
+    setPhase(accountId, 'delegated', { detail: payload.goal || '' });
     pushBubble(accountId, { kind: 'note', ts, title: '委托远端 Agent', detail: payload.goal || '' });
     return;
   }
   if (ev === 'strategy.returned') {
+    setPhase(accountId, 'finishing', { detail: '' });
     pushBubble(accountId, { kind: 'finish', ts, title: '远端 Agent 返回', detail: payload.summary || '' });
     return;
   }
@@ -709,15 +1054,20 @@ function renderWorkers() {
     const sv = (w.supervisor && w.supervisor.mode) || 'waiting';
     row.className = 'worker' + (isActive ? ' active' : '');
     const name = w.display_name || w.account_id;
+    // 心跳：supervisor.is_active 就闪；额外叠当前阶段文案，让 tab 一眼看出在做什么
+    const activity = state.activity.get(w.account_id);
+    const activityLabel = activity && activity.phase && activity.phase !== 'done' && activity.phase !== 'failed'
+      ? (PHASE_LABELS[activity.phase] || activity.phase) : '';
     const sub = w.supervisor && w.supervisor.is_active
-      ? `${sv} · ${w.supervisor.running_seconds}s`
+      ? `${sv} · ${activityLabel || `${w.supervisor.running_seconds}s`}`
       : sv;
+    const pulseCls = (w.supervisor && w.supervisor.is_active) ? ' pulse' : '';
     const showX = state.workers.length > 1;
     row.innerHTML = `
       <span class="avatar" style="background:${hashColor(w.account_id)}">${escapeHtml(initials(name))}</span>
       <span class="meta">
         <div class="name">${escapeHtml(name)}</div>
-        <div class="sub"><span class="status-dot ${sv}"></span> ${escapeHtml(sub)}</div>
+        <div class="sub"><span class="status-dot ${sv}${pulseCls}"></span> ${escapeHtml(sub)}</div>
       </span>
       ${showX ? '<button class="x" title="移除">×</button>' : ''}
     `;
@@ -747,10 +1097,12 @@ function renderTranscript() {
   if (t.traceId) metaBits.push(`trace=<span style="color:var(--text);font-family:var(--mono)">${escapeHtml(shortTrace(t.traceId))}</span>`);
   if (st && st.is_active) metaBits.push(`⏱ ${st.running_seconds}s`);
   else if (t.startedAt) metaBits.push(`⏱ 空闲`);
+  const activityHtml = renderActivityStripHtml(state.activeId || 'default');
   goalCard.innerHTML = `
     <div class="goal-label">当前目标</div>
     <div class="goal">${t.goal ? escapeHtml(t.goal) : '（空闲中）'}</div>
     ${metaBits.length ? `<div class="meta">${metaBits.join('<span style="color:var(--muted-2)">·</span>')}</div>` : ''}
+    ${activityHtml}
   `;
   host.appendChild(goalCard);
 
@@ -1456,11 +1808,300 @@ function connectSSE() {
   setInterval(refreshStatus, 2000);
   setInterval(refreshRuntime, 10000);
   setInterval(refreshWorkers, 5000);
+  // 每秒刷 activity-strip 的 elapsed 计时；只改一个小节点，不重排 bubbles
+  setInterval(() => updateActivityStrip(state.activeId || 'default'), 1000);
 
   // 暴露给 HTML inline handler
   window._modalResolveFn = _modalResolveFn;
   window._create = _create;
 })();
+
+/* ═══════════════════ Data 面板 ═══════════════════ */
+
+let _currentDataTab = 'state';
+
+function openDataPanel() {
+  document.getElementById('data-overlay').classList.add('show');
+  switchDataTab(_currentDataTab);
+}
+
+function closeDataPanel() {
+  document.getElementById('data-overlay').classList.remove('show');
+}
+
+function switchDataTab(tab) {
+  _currentDataTab = tab;
+  for (const el of document.querySelectorAll('.data-tabs .tab')) {
+    el.classList.toggle('active', el.dataset.tab === tab);
+  }
+  const body = document.getElementById('data-body');
+  body.innerHTML = '<div class="data-empty">加载中…</div>';
+  if (tab === 'state') renderStateTab(body);
+  else if (tab === 'tasks') renderTasksTab(body);
+  else if (tab === 'token') renderTokenTab(body);
+}
+
+/* ─── Agent State ─────────────────────────────────────── */
+
+async function renderStateTab(body) {
+  const acct = state.activeId || 'default';
+  try {
+    const r = await fetch(brainApi('/api/v1/data/agent_state?account_id=' + encodeURIComponent(acct)));
+    const d = await r.json();
+    if (!r.ok || !d.ok) throw new Error(d.detail || d.error || '加载失败');
+    body.innerHTML = renderStateHtml(d.account_id, d.state);
+  } catch (e) {
+    body.innerHTML = `<div class="data-empty">加载失败：${escapeHtml(String(e.message || e))}</div>`;
+  }
+}
+
+const STATE_FIELDS_LISTS = [
+  ['inspiration_pool', '灵感池'],
+  ['title_few_shots', '标题示例'],
+  ['hashtags', '话题标签'],
+  ['anxiety_keywords', '焦虑关键词'],
+  ['knowledge_topics', '知识话题'],
+  ['learning_notes', '学习笔记'],
+  ['recent_searches', '最近搜索'],
+];
+
+function renderStateHtml(accountId, s) {
+  const scalars = `
+    <div class="state-card">
+      <h4>标量字段</h4>
+      <div style="display:grid;grid-template-columns:100px 1fr;gap:6px 12px;font-size:12.5px">
+        <div style="color:var(--muted)">account</div><div class="scalar">${escapeHtml(accountId)}</div>
+        <div style="color:var(--muted)">mood</div><div class="scalar">${escapeHtml(s.mood || '—')}</div>
+        <div style="color:var(--muted)">last_discovery</div><div class="scalar">${escapeHtml(s.last_discovery || '—')}</div>
+        <div style="color:var(--muted)">last_check_time</div><div class="scalar">${escapeHtml(s.last_check_time || '—')}</div>
+        <div style="color:var(--muted)">last_post_date</div><div class="scalar">${escapeHtml(s.last_post_date || '—')}</div>
+        <div style="color:var(--muted)">daily_stats</div><div class="scalar">${escapeHtml(JSON.stringify(s.daily_stats || {}))}</div>
+      </div>
+    </div>
+  `;
+  const lists = STATE_FIELDS_LISTS.map(([key, label]) => {
+    const arr = Array.isArray(s[key]) ? s[key] : [];
+    const empty = arr.length === 0;
+    const items = arr.slice().reverse().map(v => {
+      const text = typeof v === 'string' ? v : JSON.stringify(v);
+      return `<li>${escapeHtml(text)}</li>`;
+    }).join('');
+    return `<div class="state-card ${empty ? 'empty' : ''}">
+      <h4>${escapeHtml(label)}<span class="count">${arr.length}</span></h4>
+      ${empty ? '<div class="scalar">（空）</div>' : `<ul>${items}</ul>`}
+    </div>`;
+  }).join('');
+  const followers = Array.isArray(s.followers_history) ? s.followers_history : [];
+  const followersItems = followers.slice().reverse().slice(0, 20).map(e => {
+    const dt = `${e.date || ''} ${e.time || ''}`.trim();
+    return `<li><span class="mono">${escapeHtml(dt)}</span> · followers=${e.followers ?? '—'}${e.likes != null ? ` · likes=${e.likes}` : ''}</li>`;
+  }).join('');
+  const followersCard = `<div class="state-card ${followers.length ? '' : 'empty'}">
+    <h4>粉丝历史<span class="count">${followers.length}</span></h4>
+    ${followers.length ? `<ul>${followersItems}</ul>` : '<div class="scalar">（空）</div>'}
+  </div>`;
+  return `${scalars}<div style="height:16px"></div><div class="state-grid">${lists}${followersCard}</div>`;
+}
+
+/* ─── Tasks ─────────────────────────────────────── */
+
+async function renderTasksTab(body) {
+  try {
+    const r = await fetch(brainApi('/api/v1/data/tasks?limit=100'));
+    const d = await r.json();
+    if (!d.ok) throw new Error(d.detail || d.error || '加载失败');
+    if (!d.data.length) {
+      body.innerHTML = '<div class="data-empty">暂无任务历史</div>';
+      return;
+    }
+    const rows = d.data.map(t => {
+      const status = t.status || 'unknown';
+      const short = (t.trace_id || '').slice(0, 8);
+      return `<tr class="row-click" onclick="openTaskDetail('${escapeHtml(t.trace_id)}')">
+        <td class="mono" style="width:88px">${escapeHtml(short)}</td>
+        <td class="mono" style="width:150px">${escapeHtml(t.dt || '')}</td>
+        <td style="width:100px"><span class="pill-status ${status}">${escapeHtml(status)}</span></td>
+        <td class="ellipsis" title="${escapeHtml(t.goal || '')}">${escapeHtml(t.goal || '—')}</td>
+        <td class="mono" style="width:100px">${escapeHtml(t.account_id || '')}</td>
+      </tr>`;
+    }).join('');
+    body.innerHTML = `
+      <div style="color:var(--muted);font-size:11.5px;margin-bottom:8px">共 ${d.total} 条 · 显示最近 ${d.data.length} 条 · 点行查看详情</div>
+      <table class="data-table">
+        <thead><tr>
+          <th>Trace</th><th>时间</th><th>状态</th><th>目标</th><th>账号</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    `;
+  } catch (e) {
+    body.innerHTML = `<div class="data-empty">加载失败：${escapeHtml(String(e.message || e))}</div>`;
+  }
+}
+
+async function openTaskDetail(traceId) {
+  const body = document.getElementById('data-body');
+  body.innerHTML = '<div class="data-empty">加载中…</div>';
+  try {
+    const r = await fetch(brainApi('/api/v1/data/tasks/' + encodeURIComponent(traceId)));
+    const d = await r.json();
+    if (!d.ok) throw new Error(d.detail || d.error || '加载失败');
+    const meta = d.meta || {};
+    const metaRow = Object.entries(meta)
+      .map(([k, v]) => `<span class="kv"><b>${escapeHtml(k)}</b>${escapeHtml(String(v))}</span>`).join('');
+    body.innerHTML = `
+      <button class="data-back" onclick="closeTaskDetail()">← 返回列表</button>
+      <div style="height:12px"></div>
+      <div style="font-weight:600;font-size:14px;margin-bottom:6px;color:var(--text)">Trace <span class="mono" style="color:var(--muted)">${escapeHtml(traceId)}</span></div>
+      <div class="task-detail-meta">${metaRow || '<span class="kv">无 frontmatter</span>'}</div>
+      <div class="task-detail-body">${escapeHtml(d.body || '（无内容）')}</div>
+    `;
+  } catch (e) {
+    body.innerHTML = `<div class="data-empty">加载失败：${escapeHtml(String(e.message || e))}</div>`;
+  }
+}
+
+function closeTaskDetail() {
+  switchDataTab('tasks');
+}
+
+/* ─── Token Usage ─────────────────────────────────────── */
+
+async function renderTokenTab(body) {
+  try {
+    const r = await fetch(brainApi('/api/v1/data/token_usage/summary?days=14'));
+    const d = await r.json();
+    if (!d.ok) throw new Error(d.detail || d.error || '加载失败');
+    const rows = d.data || [];
+    const maxTotal = rows.reduce((m, r) => Math.max(m, r.total), 0) || 1;
+    const bars = rows.map(r => {
+      const pct = Math.max(2, Math.round(100 * r.total / maxTotal));
+      return `<div class="token-row">
+        <span class="date">${escapeHtml(r.date)}</span>
+        <div class="bar-wrap"><div class="bar" style="width:${pct}%"></div></div>
+        <span class="num">${r.total.toLocaleString()} · ${r.calls} 次</span>
+      </div>`;
+    }).join('');
+    const grandTotal = rows.reduce((s, r) => s + r.total, 0);
+    const grandCalls = rows.reduce((s, r) => s + r.calls, 0);
+    const modelBreakdown = aggregateModels(rows);
+    const modelList = Object.entries(modelBreakdown)
+      .sort((a, b) => b[1] - a[1])
+      .map(([m, t]) => `<li><span class="mono" style="color:var(--muted)">${escapeHtml(m)}</span> · ${t.toLocaleString()}</li>`).join('');
+    body.innerHTML = `
+      <div style="display:grid;grid-template-columns:2fr 1fr;gap:20px;align-items:start">
+        <div>
+          <div style="color:var(--muted);font-size:11.5px;margin-bottom:10px">最近 ${d.days} 天</div>
+          <div class="token-summary">${bars || '<div class="data-empty">暂无数据</div>'}</div>
+        </div>
+        <div>
+          <div class="state-card">
+            <h4>合计</h4>
+            <div class="scalar">Total: <b>${grandTotal.toLocaleString()}</b> tokens</div>
+            <div class="scalar">Calls: <b>${grandCalls.toLocaleString()}</b></div>
+          </div>
+          <div style="height:12px"></div>
+          <div class="state-card ${modelList ? '' : 'empty'}">
+            <h4>按模型</h4>
+            ${modelList ? `<ul>${modelList}</ul>` : '<div class="scalar">（暂无）</div>'}
+          </div>
+        </div>
+      </div>
+    `;
+  } catch (e) {
+    body.innerHTML = `<div class="data-empty">加载失败：${escapeHtml(String(e.message || e))}</div>`;
+  }
+}
+
+function aggregateModels(rows) {
+  const out = {};
+  for (const r of rows) {
+    const ms = r.models || {};
+    for (const [m, t] of Object.entries(ms)) {
+      out[m] = (out[m] || 0) + t;
+    }
+  }
+  return out;
+}
+
+// ESC 关闭 data panel / live fullscreen
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape') return;
+  if (document.getElementById('data-overlay').classList.contains('show')) {
+    closeDataPanel();
+  } else if (document.getElementById('live-fullscreen').classList.contains('show')) {
+    closeLiveFullscreen();
+  }
+});
+
+/* ═══════════════════ Live 全屏 ═══════════════════ */
+
+function openLiveFullscreen() {
+  const acct = state.activeId || 'default';
+  const entry = state.liveCache.get(acct);
+  const body = document.getElementById('live-fs-body');
+  const info = document.getElementById('live-fs-info');
+  body.innerHTML = '';
+  if (entry && entry.iframe) {
+    // 直接把缓存的 iframe 节点**移动**过来（不新建，避免连接两个终端触发阿里 2002 冲突）
+    body.appendChild(entry.iframe);
+  } else {
+    const rt = state.runtime;
+    const url = rt && rt.agentbay && rt.agentbay.live_view_url;
+    if (url) {
+      const ifr = document.createElement('iframe');
+      ifr.src = url;
+      body.appendChild(ifr);
+    } else {
+      body.innerHTML = '<div style="margin:auto;color:var(--muted);padding:40px">该 worker 尚未建立云端 session</div>';
+    }
+  }
+  const rt = state.runtime;
+  info.textContent = rt && rt.agentbay
+    ? `${acct} · ${rt.agentbay.platform || 'mobile'} · ${(rt.agentbay.screen_size || {}).width || '?'}×${(rt.agentbay.screen_size || {}).height || '?'}`
+    : acct;
+  document.getElementById('live-fullscreen').classList.add('show');
+}
+
+function closeLiveFullscreen() {
+  // 关闭时把 iframe 节点**移回**原来的 live-body，继续共享同一个流连接
+  const fs = document.getElementById('live-fullscreen');
+  const fsBody = document.getElementById('live-fs-body');
+  const ifr = fsBody.querySelector('iframe');
+  if (ifr) {
+    const acct = state.activeId || 'default';
+    const entry = state.liveCache.get(acct);
+    const liveBody = document.getElementById('live-body');
+    if (entry && entry.iframe === ifr && liveBody) {
+      liveBody.appendChild(ifr);
+      // 只保留当前 iframe 可见（LRU 的其他隐藏项保持原状）
+      ifr.style.display = 'block';
+    } else {
+      // 非缓存 iframe（一次性那种）直接扔
+      ifr.remove();
+    }
+  }
+  fsBody.innerHTML = '';
+  fs.classList.remove('show');
+}
 </script>
+
+<!-- Data 面板 overlay（默认隐藏）-->
+<div class="data-overlay" id="data-overlay" onclick="if(event.target===this)closeDataPanel()">
+  <div class="data-panel">
+    <div class="data-head">
+      <span class="title">数据管理</span>
+      <span class="grow"></span>
+      <button class="close" onclick="closeDataPanel()" title="关闭">×</button>
+    </div>
+    <div class="data-tabs">
+      <button class="tab active" data-tab="state" onclick="switchDataTab('state')">Agent State</button>
+      <button class="tab" data-tab="tasks" onclick="switchDataTab('tasks')">Tasks</button>
+      <button class="tab" data-tab="token" onclick="switchDataTab('token')">Token Usage</button>
+    </div>
+    <div class="data-body" id="data-body"></div>
+  </div>
+</div>
+
 </body>
 </html>

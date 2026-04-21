@@ -22,12 +22,13 @@ def register_routers(app: FastAPI, topology: Topology) -> None:
     app.include_router(events.router, prefix=API_PREFIX, tags=["Events"])
 
     if topology.has_brain:
-        from api.v1 import callbacks, chrome_proxy, tasks, usage, workers
+        from api.v1 import callbacks, chrome_proxy, data, tasks, usage, workers
 
         app.include_router(tasks.router, prefix=API_PREFIX, tags=["Tasks"])
         app.include_router(workers.router, prefix=API_PREFIX, tags=["Workers"])
         app.include_router(callbacks.router, prefix=API_PREFIX, tags=["Callback"])
         app.include_router(usage.router, prefix=API_PREFIX, tags=["Usage"])
+        app.include_router(data.router, prefix=API_PREFIX, tags=["Data"])
         # chrome 代理仅本地 chrome 才有意义，但 brain 拓扑下也允许（不活跃即不会被调）
         app.include_router(chrome_proxy.router, prefix=API_PREFIX, tags=["ChromeProxy"])
 
