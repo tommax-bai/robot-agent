@@ -21,4 +21,5 @@ debug_screenshot.jpg
 chrome.zip
 chrome-mac-arm64/
 chromedriver.zip
-chromedriver-mac-arm64/.dev.env
+chromedriver-mac-arm64/
+.dev.env
