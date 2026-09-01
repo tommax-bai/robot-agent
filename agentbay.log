@@ -5805,7 +5805,7 @@ Traceback (most recent call last):
 
   File "/Users/baitianxing/codes/robot-agent/api/v1/tasks.py", line 26, in _run_background
     await worker.supervisor.submit_task(task, trace_id=trace_id)
-          │      │          │           │              └ '[REMOVED-SECRET]'
+          │      │          │           │              └ '6f66bff3-1db7-40ba-a560-400d4feabd02'
           │      │          │           └ Task(kind='user_goal', goal='打开小红书，点击第一个内容')
           │      │          └ <function Supervisor.submit_task at 0x14226e160>
           │      └ <agents.supervisor.supervisor.Supervisor object at 0x144c6f8c0>
@@ -5813,14 +5813,14 @@ Traceback (most recent call last):
 
   File "/Users/baitianxing/codes/robot-agent/agents/supervisor/supervisor.py", line 128, in submit_task
     return await self._run_with_slot(task, trace_id)
-                 │    │              │     └ '[REMOVED-SECRET]'
+                 │    │              │     └ '6f66bff3-1db7-40ba-a560-400d4feabd02'
                  │    │              └ Task(kind='user_goal', goal='打开小红书，点击第一个内容')
                  │    └ <function Supervisor._run_with_slot at 0x14226e3e0>
                  └ <agents.supervisor.supervisor.Supervisor object at 0x144c6f8c0>
 
   File "/Users/baitianxing/codes/robot-agent/agents/supervisor/supervisor.py", line 180, in _run_with_slot
     run.result = await self._operator.run(task, run.ctx)
-    │   │              │    │         │   │     │   └ RunContext(trace_id='[REMOVED-SECRET]', cancel=<runtime.ctx.CancelScope object at 0x143c82a40>, state=<se...
+    │   │              │    │         │   │     │   └ RunContext(trace_id='6f66bff3-1db7-40ba-a560-400d4feabd02', cancel=<runtime.ctx.CancelScope object at 0x143c82a40>, state=<se...
     │   │              │    │         │   │     └ <agents.supervisor.run_slot.RunHandle object at 0x144cb8980>
     │   │              │    │         │   └ Task(kind='user_goal', goal='打开小红书，点击第一个内容')
     │   │              │    │         └ <function Operator.run at 0x144c95760>
@@ -5831,7 +5831,7 @@ Traceback (most recent call last):
 
   File "/Users/baitianxing/codes/robot-agent/agents/operator/operator.py", line 71, in run
     result = await self._runner.run(subtask, sub_ctx)
-                   │    │       │   │        └ RunContext(trace_id='[REMOVED-SECRET]', cancel=<runtime.ctx.CancelScope object at 0x143094900>, state=<se...
+                   │    │       │   │        └ RunContext(trace_id='6f66bff3-1db7-40ba-a560-400d4feabd02', cancel=<runtime.ctx.CancelScope object at 0x143094900>, state=<se...
                    │    │       │   └ SubTask(id='sub-0', goal='打开小红书并检查登录状态', required_skill='rednote.auth', intent='login_check')
                    │    │       └ <function SubtaskRunner.run at 0x144c97740>
                    │    └ <agents.operator.subtask_runner.SubtaskRunner object at 0x144c6f4d0>
@@ -5839,7 +5839,7 @@ Traceback (most recent call last):
 
   File "/Users/baitianxing/codes/robot-agent/agents/operator/subtask_runner.py", line 57, in run
     outcome = await resolver.resolve(subtask, ctx)
-                    │        │       │        └ RunContext(trace_id='[REMOVED-SECRET]', cancel=<runtime.ctx.CancelScope object at 0x143094900>, state=<se...
+                    │        │       │        └ RunContext(trace_id='6f66bff3-1db7-40ba-a560-400d4feabd02', cancel=<runtime.ctx.CancelScope object at 0x143094900>, state=<se...
                     │        │       └ SubTask(id='sub-0', goal='打开小红书并检查登录状态', required_skill='rednote.auth', intent='login_check')
                     │        └ <function StrategyResolver.resolve at 0x144c97060>
                     └ <agents.operator.resolvers.strategy.StrategyResolver object at 0x144c6e900>
@@ -5856,15 +5856,15 @@ Traceback (most recent call last):
 
   File "/Users/baitianxing/codes/robot-agent/agents/operator/agentbay_strategy.py", line 46, in run
     session = self._session_mgr.acquire(ctx.trace_id)
-              │    │            │       │   └ '[REMOVED-SECRET]'
-              │    │            │       └ RunContext(trace_id='[REMOVED-SECRET]', cancel=<runtime.ctx.CancelScope object at 0x143094900>, state=<se...
+              │    │            │       │   └ '6f66bff3-1db7-40ba-a560-400d4feabd02'
+              │    │            │       └ RunContext(trace_id='6f66bff3-1db7-40ba-a560-400d4feabd02', cancel=<runtime.ctx.CancelScope object at 0x143094900>, state=<se...
               │    │            └ <function SessionManager.acquire at 0x1055a3d80>
               │    └ <tools.cloud_mobile.session.SessionManager object at 0x144c6cec0>
               └ <agents.operator.agentbay_strategy.AgentBayDelegateStrategy object at 0x144c6f0e0>
 
   File "/Users/baitianxing/codes/robot-agent/tools/cloud_mobile/session.py", line 120, in acquire
     return self._do_create(trace_id)
-           │    │          └ '[REMOVED-SECRET]'
+           │    │          └ '6f66bff3-1db7-40ba-a560-400d4feabd02'
            │    └ <function SessionManager._do_create at 0x1055c0180>
            └ <tools.cloud_mobile.session.SessionManager object at 0x144c6cec0>
 
@@ -6011,7 +6011,7 @@ Traceback (most recent call last):
 
   File "/Users/baitianxing/codes/robot-agent/api/v1/tasks.py", line 26, in _run_background
     await worker.supervisor.submit_task(task, trace_id=trace_id)
-          │      │          │           │              └ '[REMOVED-SECRET]'
+          │      │          │           │              └ '404648b8-2621-4fa5-9178-650f03ac9a86'
           │      │          │           └ Task(kind='user_goal', goal='打开小红书，点击第2个内容')
           │      │          └ <function Supervisor.submit_task at 0x14226e160>
           │      └ <agents.supervisor.supervisor.Supervisor object at 0x144ce6210>
@@ -6019,14 +6019,14 @@ Traceback (most recent call last):
 
   File "/Users/baitianxing/codes/robot-agent/agents/supervisor/supervisor.py", line 128, in submit_task
     return await self._run_with_slot(task, trace_id)
-                 │    │              │     └ '[REMOVED-SECRET]'
+                 │    │              │     └ '404648b8-2621-4fa5-9178-650f03ac9a86'
                  │    │              └ Task(kind='user_goal', goal='打开小红书，点击第2个内容')
                  │    └ <function Supervisor._run_with_slot at 0x14226e3e0>
                  └ <agents.supervisor.supervisor.Supervisor object at 0x144ce6210>
 
   File "/Users/baitianxing/codes/robot-agent/agents/supervisor/supervisor.py", line 180, in _run_with_slot
     run.result = await self._operator.run(task, run.ctx)
-    │   │              │    │         │   │     │   └ RunContext(trace_id='[REMOVED-SECRET]', cancel=<runtime.ctx.CancelScope object at 0x14645f280>, state=<se...
+    │   │              │    │         │   │     │   └ RunContext(trace_id='404648b8-2621-4fa5-9178-650f03ac9a86', cancel=<runtime.ctx.CancelScope object at 0x14645f280>, state=<se...
     │   │              │    │         │   │     └ <agents.supervisor.run_slot.RunHandle object at 0x14637d950>
     │   │              │    │         │   └ Task(kind='user_goal', goal='打开小红书，点击第2个内容')
     │   │              │    │         └ <function Operator.run at 0x144c95760>
@@ -6037,7 +6037,7 @@ Traceback (most recent call last):
 
   File "/Users/baitianxing/codes/robot-agent/agents/operator/operator.py", line 71, in run
     result = await self._runner.run(subtask, sub_ctx)
-                   │    │       │   │        └ RunContext(trace_id='[REMOVED-SECRET]', cancel=<runtime.ctx.CancelScope object at 0x146469f80>, state=<se...
+                   │    │       │   │        └ RunContext(trace_id='404648b8-2621-4fa5-9178-650f03ac9a86', cancel=<runtime.ctx.CancelScope object at 0x146469f80>, state=<se...
                    │    │       │   └ SubTask(id='sub-0', goal='打开小红书并确保处于登录状态', required_skill='rednote.auth', intent='login_check')
                    │    │       └ <function SubtaskRunner.run at 0x144c97740>
                    │    └ <agents.operator.subtask_runner.SubtaskRunner object at 0x144ce5e50>
@@ -6045,7 +6045,7 @@ Traceback (most recent call last):
 
   File "/Users/baitianxing/codes/robot-agent/agents/operator/subtask_runner.py", line 57, in run
     outcome = await resolver.resolve(subtask, ctx)
-                    │        │       │        └ RunContext(trace_id='[REMOVED-SECRET]', cancel=<runtime.ctx.CancelScope object at 0x146469f80>, state=<se...
+                    │        │       │        └ RunContext(trace_id='404648b8-2621-4fa5-9178-650f03ac9a86', cancel=<runtime.ctx.CancelScope object at 0x146469f80>, state=<se...
                     │        │       └ SubTask(id='sub-0', goal='打开小红书并确保处于登录状态', required_skill='rednote.auth', intent='login_check')
                     │        └ <function StrategyResolver.resolve at 0x144c97060>
                     └ <agents.operator.resolvers.strategy.StrategyResolver object at 0x144ce5a90>
@@ -6062,15 +6062,15 @@ Traceback (most recent call last):
 
   File "/Users/baitianxing/codes/robot-agent/agents/operator/agentbay_strategy.py", line 46, in run
     session = self._session_mgr.acquire(ctx.trace_id)
-              │    │            │       │   └ '[REMOVED-SECRET]'
-              │    │            │       └ RunContext(trace_id='[REMOVED-SECRET]', cancel=<runtime.ctx.CancelScope object at 0x146469f80>, state=<se...
+              │    │            │       │   └ '404648b8-2621-4fa5-9178-650f03ac9a86'
+              │    │            │       └ RunContext(trace_id='404648b8-2621-4fa5-9178-650f03ac9a86', cancel=<runtime.ctx.CancelScope object at 0x146469f80>, state=<se...
               │    │            └ <function SessionManager.acquire at 0x1055a3d80>
               │    └ <tools.cloud_mobile.session.SessionManager object at 0x144ce4690>
               └ <agents.operator.agentbay_strategy.AgentBayDelegateStrategy object at 0x144ce5810>
 
   File "/Users/baitianxing/codes/robot-agent/tools/cloud_mobile/session.py", line 120, in acquire
     return self._do_create(trace_id)
-           │    │          └ '[REMOVED-SECRET]'
+           │    │          └ '404648b8-2621-4fa5-9178-650f03ac9a86'
            │    └ <function SessionManager._do_create at 0x1055c0180>
            └ <tools.cloud_mobile.session.SessionManager object at 0x144ce4690>
 
@@ -6217,7 +6217,7 @@ Traceback (most recent call last):
 
   File "/Users/baitianxing/codes/robot-agent/api/v1/tasks.py", line 26, in _run_background
     await worker.supervisor.submit_task(task, trace_id=trace_id)
-          │      │          │           │              └ '[REMOVED-SECRET]'
+          │      │          │           │              └ '3e4a6ab9-574b-4a7a-a2fb-ce0b4160e8d6'
           │      │          │           └ Task(kind='user_goal', goal='打开小红书，点击第3个内容')
           │      │          └ <function Supervisor.submit_task at 0x14226e160>
           │      └ <agents.supervisor.supervisor.Supervisor object at 0x144f18cd0>
@@ -6225,14 +6225,14 @@ Traceback (most recent call last):
 
   File "/Users/baitianxing/codes/robot-agent/agents/supervisor/supervisor.py", line 128, in submit_task
     return await self._run_with_slot(task, trace_id)
-                 │    │              │     └ '[REMOVED-SECRET]'
+                 │    │              │     └ '3e4a6ab9-574b-4a7a-a2fb-ce0b4160e8d6'
                  │    │              └ Task(kind='user_goal', goal='打开小红书，点击第3个内容')
                  │    └ <function Supervisor._run_with_slot at 0x14226e3e0>
                  └ <agents.supervisor.supervisor.Supervisor object at 0x144f18cd0>
 
   File "/Users/baitianxing/codes/robot-agent/agents/supervisor/supervisor.py", line 180, in _run_with_slot
     run.result = await self._operator.run(task, run.ctx)
-    │   │              │    │         │   │     │   └ RunContext(trace_id='[REMOVED-SECRET]', cancel=<runtime.ctx.CancelScope object at 0x144cf7b80>, state=<se...
+    │   │              │    │         │   │     │   └ RunContext(trace_id='3e4a6ab9-574b-4a7a-a2fb-ce0b4160e8d6', cancel=<runtime.ctx.CancelScope object at 0x144cf7b80>, state=<se...
     │   │              │    │         │   │     └ <agents.supervisor.run_slot.RunHandle object at 0x14637ed50>
     │   │              │    │         │   └ Task(kind='user_goal', goal='打开小红书，点击第3个内容')
     │   │              │    │         └ <function Operator.run at 0x144c95760>
@@ -6243,7 +6243,7 @@ Traceback (most recent call last):
 
   File "/Users/baitianxing/codes/robot-agent/agents/operator/operator.py", line 71, in run
     result = await self._runner.run(subtask, sub_ctx)
-                   │    │       │   │        └ RunContext(trace_id='[REMOVED-SECRET]', cancel=<runtime.ctx.CancelScope object at 0x144cf5a40>, state=<se...
+                   │    │       │   │        └ RunContext(trace_id='3e4a6ab9-574b-4a7a-a2fb-ce0b4160e8d6', cancel=<runtime.ctx.CancelScope object at 0x144cf5a40>, state=<se...
                    │    │       │   └ SubTask(id='sub-0', goal='确保小红书已登录', required_skill='rednote.auth', intent='login_check')
                    │    │       └ <function SubtaskRunner.run at 0x144c97740>
                    │    └ <agents.operator.subtask_runner.SubtaskRunner object at 0x144f18910>
@@ -6251,7 +6251,7 @@ Traceback (most recent call last):
 
   File "/Users/baitianxing/codes/robot-agent/agents/operator/subtask_runner.py", line 57, in run
     outcome = await resolver.resolve(subtask, ctx)
-                    │        │       │        └ RunContext(trace_id='[REMOVED-SECRET]', cancel=<runtime.ctx.CancelScope object at 0x144cf5a40>, state=<se...
+                    │        │       │        └ RunContext(trace_id='3e4a6ab9-574b-4a7a-a2fb-ce0b4160e8d6', cancel=<runtime.ctx.CancelScope object at 0x144cf5a40>, state=<se...
                     │        │       └ SubTask(id='sub-0', goal='确保小红书已登录', required_skill='rednote.auth', intent='login_check')
                     │        └ <function StrategyResolver.resolve at 0x144c97060>
                     └ <agents.operator.resolvers.strategy.StrategyResolver object at 0x144f18550>
@@ -6268,15 +6268,15 @@ Traceback (most recent call last):
 
   File "/Users/baitianxing/codes/robot-agent/agents/operator/agentbay_strategy.py", line 46, in run
     session = self._session_mgr.acquire(ctx.trace_id)
-              │    │            │       │   └ '[REMOVED-SECRET]'
-              │    │            │       └ RunContext(trace_id='[REMOVED-SECRET]', cancel=<runtime.ctx.CancelScope object at 0x144cf5a40>, state=<se...
+              │    │            │       │   └ '3e4a6ab9-574b-4a7a-a2fb-ce0b4160e8d6'
+              │    │            │       └ RunContext(trace_id='3e4a6ab9-574b-4a7a-a2fb-ce0b4160e8d6', cancel=<runtime.ctx.CancelScope object at 0x144cf5a40>, state=<se...
               │    │            └ <function SessionManager.acquire at 0x1055a3d80>
               │    └ <tools.cloud_mobile.session.SessionManager object at 0x144ce6fd0>
               └ <agents.operator.agentbay_strategy.AgentBayDelegateStrategy object at 0x144f182d0>
 
   File "/Users/baitianxing/codes/robot-agent/tools/cloud_mobile/session.py", line 120, in acquire
     return self._do_create(trace_id)
-           │    │          └ '[REMOVED-SECRET]'
+           │    │          └ '3e4a6ab9-574b-4a7a-a2fb-ce0b4160e8d6'
            │    └ <function SessionManager._do_create at 0x1055c0180>
            └ <tools.cloud_mobile.session.SessionManager object at 0x144ce6fd0>
 
